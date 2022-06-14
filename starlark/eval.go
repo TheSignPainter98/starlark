@@ -47,8 +47,8 @@ type Thread struct {
 	// See example_test.go for some example implementations of Load.
 	Load func(thread *Thread, module string) (StringDict, error)
 
-	// steps counts abstract computation steps executed by this thread.
-	steps, maxSteps uint64
+	// Monitors resource usage to enforce bound compliance
+	*Monitor
 
 	// cancelReason records the reason from the first call to Cancel.
 	cancelReason *string
@@ -59,24 +59,6 @@ type Thread struct {
 
 	// proftime holds the accumulated execution time since the last profile event.
 	proftime time.Duration
-}
-
-// ExecutionSteps returns a count of abstract computation steps executed
-// by this thread. It is incremented by the interpreter. It may be used
-// as a measure of the approximate cost of Starlark execution, by
-// computing the difference in its value before and after a computation.
-//
-// The precise meaning of "step" is not specified and may change.
-func (thread *Thread) ExecutionSteps() uint64 {
-	return thread.steps
-}
-
-// SetMaxExecutionSteps sets a limit on the number of Starlark
-// computation steps that may be executed by this thread. If the
-// thread's step counter exceeds this limit, the interpreter calls
-// thread.Cancel("too many steps").
-func (thread *Thread) SetMaxExecutionSteps(max uint64) {
-	thread.maxSteps = max
 }
 
 // Cancel causes execution of Starlark code in the specified thread to
@@ -1204,9 +1186,10 @@ func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
 
 	if thread.stack == nil {
 		// one-time initialization of thread
-		if thread.maxSteps == 0 {
-			thread.maxSteps-- // (MaxUint64)
+		if thread.Monitor == nil {
+			thread.Monitor = new(Monitor)
 		}
+		thread.initMonitor()
 	}
 
 	thread.stack = append(thread.stack, fr) // push
