@@ -18,7 +18,7 @@ var (
 	UNIT_SIZE = reflect.TypeOf(uintptr(0)).Size() * UINTPTRS_PER_UNIT
 )
 
-var DefaultLocationsCap uintptr = uintptr(*flag.Uint64("memcap", 1<<15-1, "set max usable `locations`"))
+var DefaultLocationsCap = flag.Uint64("memcap", 1<<15-1, "set max usable `locations`")
 
 type Monitor struct {
 	// steps counts the number of execution steps taken within the Starlark program
@@ -64,7 +64,7 @@ type Monitor struct {
 
 func (mon *Monitor) initMonitor() {
 	if mon.locationsCap == 0 {
-		mon.locationsCap = DefaultLocationsCap
+		mon.locationsCap = uintptr(*DefaultLocationsCap)
 	}
 
 	if mon.maxSteps == 0 {
