@@ -135,7 +135,7 @@ func (mon *Monitor) DeclareSizeIncrease(delta uintptr) error {
 	}
 	atomic.AddUintptr(&mon.locationsUsed, delta)
 	if mon.locationsUsed >= mon.locationsCap {
-		mon.err = fmt.Errorf("too much memory, failed to allocate %d extra locs", delta)
+		mon.err = fmt.Errorf("too much memory used, failed to allocate another %d locations", delta)
 		return mon.err
 	}
 	return nil
