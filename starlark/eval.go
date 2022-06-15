@@ -48,7 +48,7 @@ type Thread struct {
 	Load func(thread *Thread, module string) (StringDict, error)
 
 	// Monitors resource usage to enforce bound compliance
-	*Monitor
+	Monitor
 
 	// cancelReason records the reason from the first call to Cancel.
 	cancelReason *string
@@ -1186,9 +1186,6 @@ func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
 
 	if thread.stack == nil {
 		// one-time initialization of thread
-		if thread.Monitor == nil {
-			thread.Monitor = new(Monitor)
-		}
 		thread.initMonitor()
 	}
 

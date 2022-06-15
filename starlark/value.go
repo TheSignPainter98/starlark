@@ -1370,6 +1370,21 @@ func Len(x Value) int {
 	return -1
 }
 
+func IterableLen(i Iterable) int {
+	if len := Len(i); 0 <= len {
+		return len
+	}
+
+	iter := i.Iterate()
+	defer iter.Done()
+	len := 0
+	var __ Value
+	for iter.Next(&__) {
+		len++
+	}
+	return len
+}
+
 // Iterate return a new iterator for the value if iterable, nil otherwise.
 // If the result is non-nil, the caller must call Done when finished with it.
 //
