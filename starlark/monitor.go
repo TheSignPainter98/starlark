@@ -64,7 +64,11 @@ type Monitor struct {
 
 func (mon *Monitor) initMonitor() {
 	if mon.locationsCap == 0 {
-		mon.locationsCap = uintptr(*DefaultLocationsCap)
+		if dflt := uintptr(*DefaultLocationsCap); dflt != 0 {
+			mon.locationsCap = dflt
+		} else {
+			mon.locationsCap-- // MaxUintptr
+		}
 	}
 
 	if mon.maxSteps == 0 {
@@ -78,10 +82,6 @@ func (mon *Monitor) CheckUsage() error {
 	}
 	if mon.steps >= mon.maxSteps {
 		mon.err = errors.New("too many steps")
-		return mon.err
-	}
-	if mon.locationsUsed >= mon.locationsCap {
-		mon.err = errors.New("too much memory") // TODO(kcza): Still required or just paranoia?
 		return mon.err
 	}
 	return nil
