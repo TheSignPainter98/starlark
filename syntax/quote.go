@@ -234,6 +234,7 @@ func indexByte(s string, b byte) int {
 // Quote returns a Starlark literal that denotes s.
 // If b, it returns a bytes literal.
 func Quote(s string, b bool) string {
+	// TODO(kcza): track location usage?
 	const hex = "0123456789abcdef"
 	var runeTmp [utf8.UTFMax]byte
 
