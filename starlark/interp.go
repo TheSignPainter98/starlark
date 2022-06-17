@@ -654,6 +654,10 @@ loop:
 		iter.Done()
 	}
 
+	// Free remaining stacks
+	thread.DeclareSizeDecrease(uintptr(len(stack)))
+	thread.DeclareSizeDecrease(uintptr(len(iterstack)))
+
 	fr.locals = nil
 
 	return result, err
