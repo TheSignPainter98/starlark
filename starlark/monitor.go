@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"sync/atomic"
+
+	"go.starlark.net/syntax"
 )
 
 // This file defines resource monitors
@@ -243,18 +245,222 @@ func (mon *Monitor) DeclareSizeDecrease(delta uintptr) {
 //	return t.Size() + uintptr(v.Len())*reflect.TypeOf(rune(0)).Size()
 //}
 
-//func BytesToSizeUnits(raw uintptr) (size uintptr) {
-//	size = raw / UNIT_SIZE
-//	if raw%UNIT_SIZE != 0 {
-//		size++
-//	}
-//	return
-//}
+func BytesToSizeUnits(raw uintptr) (size uintptr) {
+	size = raw / UNIT_SIZE
+	if raw%UNIT_SIZE != 0 {
+		size++
+	}
+	return
+}
 
 //func SizeOfStringWithLength(len uintptr) uintptr {
 //	t := reflect.TypeOf("")
 //	return (t.Size() + len*reflect.TypeOf(rune(0)).Size()) / UNIT_SIZE
 //}
 
-//// Standard Sized implementations
-//func (i *big.Int) Size() uintptr { return BytesToSizeUnits(uintptr(len(i.Bits()) / 8)) }
+func EstimateUnarySizeIncrease(op syntax.Token, x Value) uintptr {
+	if op == syntax.NOT {
+		return 1
+	}
+	return 0
+}
+
+// If the types of x and y are acceptable to operation op and are defined in the standard library, estimates the maximum size of the result, otherwise, returns zero
+func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) uintptr {
+	switch op {
+	case syntax.PLUS:
+		switch x.(type) {
+		case String:
+			if sameType(x, y) {
+				return uintptr(1 + x.(String).Len() + y.(String).Len())
+			}
+		case Int:
+			switch y.(type) {
+			case Int:
+				return intAddSizeBound(x.(Int), y.(Int))
+			case Float:
+				return 1
+			}
+		case Float:
+			switch y.(type) {
+			case Int, Float:
+				return 1
+			}
+		case *List, Tuple:
+			if sameType(x, y) {
+				return uintptr(x.(Sequence).Len() + y.(Sequence).Len())
+			}
+		}
+	case syntax.MINUS:
+		switch x.(type) {
+		case Int, Float:
+			switch y.(type) {
+			case Int, Float:
+				return intAddSizeBound(x.(Int), y.(Int))
+			}
+		}
+	case syntax.STAR:
+		if _, ok := y.(Int); ok {
+			x, y = y, x
+		}
+		if x, ok := x.(Int); ok {
+			switch y.(type) {
+			case Int:
+				return intMulSizeBound(x, y.(Int))
+			case Float:
+				switch y.(type) {
+				case Float:
+					return 1
+				}
+			case String, Bytes, *List, Tuple:
+				xi, err := AsInt32(x)
+				if err != nil || xi <= 0 {
+					return 0
+				}
+				return uintptr(1 + xi*Len(y))
+			}
+		}
+	case syntax.SLASH:
+		switch x.(type) {
+		case Int, Float:
+			switch y.(type) {
+			case Int, Float:
+				return 1
+			}
+		}
+	case syntax.SLASHSLASH:
+		if _, ok := y.(Int); ok {
+			x, y = y, x
+		}
+		switch y.(type) {
+		case Int:
+			return intDivSizeBound(x.(Int), y.(Int))
+		case Float:
+			switch x.(type) {
+			case Int, Float:
+				return 1
+			}
+		}
+	case syntax.PERCENT:
+		switch x.(type) {
+		case Int:
+			switch y.(type) {
+			case Int:
+				return intModSizeBound(x.(Int), y.(Int))
+			case Float:
+				return 1
+			}
+		case Float:
+			switch y.(type) {
+			case Int, Float:
+				return 1
+			}
+		case String:
+			return stringInterpSizeBound(x.(String), y)
+		}
+	case syntax.NOT_IN, syntax.IN:
+	case syntax.PIPE, syntax.AMP:
+		if sameType(x, y) {
+			break
+		}
+		switch x.(type) {
+		case Int:
+			return intBitwiseSizeBound(x.(Int), y.(Int))
+		case *Set:
+			if op == syntax.AMP {
+				return setJoinBound(x.(*Set), y.(*Set), true)
+			}
+			return setJoinBound(x.(*Set), y.(*Set), false)
+		}
+
+	case syntax.CIRCUMFLEX:
+		if !sameType(x, y) {
+			break
+		}
+		switch x.(type) {
+		case Int:
+			return intBitwiseSizeBound(x.(Int), y.(Int))
+		case *Set:
+			return setJoinBound(x.(*Set), y.(*Set), false)
+		}
+	case syntax.LTLT, syntax.GTGT:
+		if x, ok := x.(Int); ok {
+			y, err := AsInt32(y)
+			if err != nil {
+				return 0
+			}
+			if op == syntax.GTGT {
+				y = -y
+			}
+			neg, err := zero.CompareSameType(syntax.LT, MakeInt(y), 1)
+			if err != nil || neg {
+				return 0
+			}
+			_, big := x.get()
+			if big != nil {
+				len := uintptr(len(big.Bits())/8 + y)
+				if len <= 0 {
+					return 1
+				}
+				return len
+			}
+			if y > 0 {
+				// Small can shift into a big
+				return 2
+			}
+			return 1
+		}
+	}
+
+	// Assume users handle the size deltas for their own objects.
+	return 0
+}
+
+func intAddSizeBound(x, y Int) uintptr {
+	return 1 + intBitwiseSizeBound(x, y)
+}
+func intMulSizeBound(x, y Int) uintptr {
+	return x.Size() + y.Size()
+}
+func intDivSizeBound(x, y Int) uintptr {
+	sizeDiff := x.Size() - y.Size()
+	if sizeDiff < 0 {
+		return 1
+	}
+	return 1 + sizeDiff
+}
+func intModSizeBound(x, y Int) uintptr {
+	return y.Size()
+}
+func intBitwiseSizeBound(x, y Int) uintptr {
+	xs := x.Size()
+	ys := y.Size()
+	if xs < ys {
+		return ys
+	}
+	return xs
+}
+func stringInterpSizeBound(x String, y Value) uintptr {
+	var ytup Tuple
+	var ok bool
+	if ytup, ok = y.(Tuple); !ok {
+		ytup = Tuple{y}
+	}
+	size := x.Len()
+	for _, z := range ytup {
+		size += len(z.String())
+	}
+	return uintptr(size)
+}
+func setJoinBound(x, y *Set, conjunction bool) uintptr {
+	xs := uintptr(x.Len())
+	ys := uintptr(y.Len())
+	if xs > ys {
+		xs, ys = ys, xs
+	}
+	if conjunction {
+		return 1 + xs
+	}
+	// Disjunction
+	return 1 + ys
+}

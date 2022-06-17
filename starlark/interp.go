@@ -171,6 +171,11 @@ loop:
 			y := stack[sp-1]
 			x := stack[sp-2]
 			sp -= 2
+			if delta := EstimateBinarySizeIncrease(binop, x, y); delta != 0 {
+				if err = thread.DeclareSizeIncrease(delta, "interp loop binary op"); err != nil {
+					break loop
+				}
+			}
 			z, err2 := Binary(binop, x, y)
 			if err2 != nil {
 				err = err2
@@ -187,6 +192,11 @@ loop:
 				unop = syntax.Token(op-compile.UPLUS) + syntax.PLUS
 			}
 			x := stack[sp-1]
+			if delta := EstimateUnarySizeIncrease(unop, x); delta != 0 {
+				if err = thread.DeclareSizeIncrease(delta, "interp loop unary op"); err != nil {
+					break loop
+				}
+			}
 			y, err2 := Unary(unop, x)
 			if err2 != nil {
 				err = err2
@@ -198,6 +208,11 @@ loop:
 			y := stack[sp-1]
 			x := stack[sp-2]
 			sp -= 2
+			if delta := EstimateBinarySizeIncrease(syntax.PLUS, x, y); delta != 0 {
+				if err = thread.DeclareSizeIncrease(delta, "interp loop inplace-add"); err != nil {
+					break loop
+				}
+			}
 
 			// It's possible that y is not Iterable but
 			// nonetheless defines x+y, in which case we
