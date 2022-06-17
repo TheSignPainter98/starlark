@@ -51,6 +51,9 @@ func (fn *Function) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Va
 	// that is expanded in chunks of min(k, nspace), for k=256 or 1024.
 	nlocals := len(f.Locals)
 	nspace := nlocals + f.MaxStack
+	if err := thread.DeclareSizeIncrease(uintptr(nspace), "call stack init"); err != nil {
+		return nil, thread.evalError(err)
+	}
 	space := make([]Value, nspace)
 	locals := space[:nlocals:nlocals] // local variables, starting with parameters
 	stack := space[nlocals:]          // operand stack
@@ -118,7 +121,6 @@ loop:
 			compile.PrintOp(f, fr.pc, op, arg)
 		}
 
-		accountedSp := sp
 
 		switch op {
 		case compile.NOP:
@@ -474,11 +476,6 @@ loop:
 				err = fmt.Errorf("got %s in sequence assignment", iterable.Type())
 				break loop
 			}
-			if err = thread.DeclareSizeIncrease(uintptr(n), "interp loop unpack"); err == nil {
-				break loop
-			} else {
-				accountedSp = sp
-			}
 
 			i := 0
 			sp += n
@@ -639,13 +636,6 @@ loop:
 		default:
 			err = fmt.Errorf("unimplemented: %s", op)
 			break loop
-		}
-
-		stackDifference := sp - accountedSp
-		if stackDifference > 0 {
-			thread.DeclareSizeIncrease(uintptr(stackDifference), "interp loop stack expansion")
-		} else if stackDifference < 0 {
-			thread.DeclareSizeDecrease(uintptr(-stackDifference))
 		}
 	}
 
