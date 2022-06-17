@@ -274,6 +274,9 @@ loop:
 			// named args (pairs)
 			var kvpairs []Tuple
 			if nkvpairs := int(arg & 0xff); nkvpairs > 0 {
+				if err = thread.DeclareSizeIncrease(uintptr(3*nkvpairs), "interp loop call prep"); err != nil {
+					break loop
+				}
 				kvpairs = make([]Tuple, 0, nkvpairs)
 				kvpairsAlloc := make(Tuple, 2*nkvpairs) // allocate a single backing array
 				sp -= 2 * nkvpairs
@@ -293,6 +296,9 @@ loop:
 					break loop
 				}
 				items := dict.Items()
+				if err = thread.DeclareSizeIncrease(uintptr(len(items)), "interp loop call prep"); err != nil {
+					break loop
+				}
 				for _, item := range items {
 					if _, ok := item[0].(String); !ok {
 						err = fmt.Errorf("keywords must be strings, not %s", item[0].Type())
@@ -309,6 +315,9 @@ loop:
 			// positional args
 			var positional Tuple
 			if npos := int(arg >> 8); npos > 0 {
+				if err = thread.DeclareSizeIncrease(1+uintptr(npos), "interp loop call prep"); err != nil {
+					break loop
+				}
 				positional = stack[sp-npos : sp]
 				sp -= npos
 
@@ -321,6 +330,9 @@ loop:
 			}
 			if args != nil {
 				// Add elements from *args sequence.
+				if err = thread.DeclareSizeIncrease(uintptr(IterableLen(args)), "interp loop call prep"); err != nil {
+					break loop
+				}
 				iter := Iterate(args)
 				if iter == nil {
 					err = fmt.Errorf("argument after * must be iterable, not %s", args.Type())
@@ -391,6 +403,11 @@ loop:
 			y := stack[sp-2]
 			x := stack[sp-3]
 			sp -= 3
+			if _, err2 := getIndex(x, y); err2 == nil {
+				if err = thread.DeclareSizeIncrease(1, "interp loop set-index"); err != nil {
+					break loop
+				}
+			}
 			err = setIndex(x, y, z)
 			if err != nil {
 				break loop
@@ -429,6 +446,9 @@ loop:
 			}
 
 		case compile.MAKEDICT:
+			if err = thread.DeclareSizeIncrease(1, "interp loop makedict"); err != nil {
+				break loop
+			}
 			stack[sp] = new(Dict)
 			sp++
 
@@ -438,6 +458,15 @@ loop:
 			v := stack[sp-1]
 			sp -= 3
 			oldlen := dict.Len()
+			_, found, err := dict.Get(k)
+			if err != nil {
+				break loop
+			}
+			if !found {
+				if err = thread.DeclareSizeIncrease(1, "interp loop setdict"); err != nil {
+					break loop
+				}
+			}
 			if err2 := dict.SetKey(k, v); err2 != nil {
 				err = err2
 				break loop
@@ -451,6 +480,9 @@ loop:
 			elem := stack[sp-1]
 			list := stack[sp-2].(*List)
 			sp -= 2
+			if err = thread.DeclareSizeIncrease(1, "interp loop append"); err != nil {
+				break loop
+			}
 			list.elems = append(list.elems, elem)
 
 		case compile.SLICE:
@@ -465,6 +497,9 @@ loop:
 				break loop
 			}
 			stack[sp] = res
+			if err = thread.DeclareSizeIncrease(1, "interp loop create slice"); err != nil {
+				break loop
+			}
 			sp++
 
 		case compile.UNPACK:
@@ -505,6 +540,9 @@ loop:
 			sp++
 
 		case compile.MAKETUPLE:
+			if err = thread.DeclareSizeIncrease(1+uintptr(arg), "interp loop maketuple"); err != nil {
+				break loop
+			}
 			n := int(arg)
 			tuple := make(Tuple, n)
 			sp -= n
@@ -513,6 +551,9 @@ loop:
 			sp++
 
 		case compile.MAKELIST:
+			if err = thread.DeclareSizeIncrease(1+uintptr(arg), "interp loop makelist"); err != nil {
+				break loop
+			}
 			n := int(arg)
 			elems := make([]Value, n)
 			sp -= n
@@ -526,6 +567,9 @@ loop:
 			n := len(tuple) - len(funcode.Freevars)
 			defaults := tuple[:n:n]
 			freevars := tuple[n:]
+			if err = thread.DeclareSizeIncrease(1, "interp loop makefunc"); err != nil {
+				break loop
+			}
 			stack[sp-1] = &Function{
 				funcode:  funcode,
 				module:   fn.module,
