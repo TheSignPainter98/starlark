@@ -185,6 +185,15 @@ func (i Int) Hash() (uint32, error) {
 	}
 	return 12582917 * uint32(lo+3), nil
 }
+
+func (i Int) Size() uintptr {
+	_, big_ := i.get()
+	if big_ != nil {
+		return BytesToSizeUnits(uintptr(len(big_.Bits()) / 8))
+	}
+	return 1
+}
+
 func (x Int) CompareSameType(op syntax.Token, v Value, depth int) (bool, error) {
 	y := v.(Int)
 	xSmall, xBig := x.get()
