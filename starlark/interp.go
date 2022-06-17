@@ -118,6 +118,8 @@ loop:
 			compile.PrintOp(f, fr.pc, op, arg)
 		}
 
+		accountedSp := sp
+
 		switch op {
 		case compile.NOP:
 			// nop
@@ -341,6 +343,9 @@ loop:
 				err = fmt.Errorf("%s value is not iterable", x.Type())
 				break loop
 			}
+			if err = thread.DeclareSizeIncrease(1, "interp loop iterpush"); err != nil {
+				break loop
+			}
 			iterstack = append(iterstack, iter)
 
 		case compile.ITERJMP:
@@ -355,6 +360,7 @@ loop:
 			n := len(iterstack) - 1
 			iterstack[n].Done()
 			iterstack = iterstack[:n]
+			thread.DeclareSizeDecrease(1)
 
 		case compile.NOT:
 			stack[sp-1] = !stack[sp-1].Truth()
@@ -453,6 +459,12 @@ loop:
 				err = fmt.Errorf("got %s in sequence assignment", iterable.Type())
 				break loop
 			}
+			if err = thread.DeclareSizeIncrease(uintptr(n), "interp loop unpack"); err == nil {
+				break loop
+			} else {
+				accountedSp = sp
+			}
+
 			i := 0
 			sp += n
 			for i < n && iter.Next(&stack[sp-1-i]) {
@@ -612,6 +624,13 @@ loop:
 		default:
 			err = fmt.Errorf("unimplemented: %s", op)
 			break loop
+		}
+
+		stackDifference := sp - accountedSp
+		if stackDifference > 0 {
+			thread.DeclareSizeIncrease(uintptr(stackDifference), "interp loop stack expansion")
+		} else if stackDifference < 0 {
+			thread.DeclareSizeDecrease(uintptr(-stackDifference))
 		}
 	}
 
