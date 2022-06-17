@@ -129,13 +129,13 @@ func (mon *Monitor) InUse() bool {
 	return mon.steps > 0
 }
 
-func (mon *Monitor) DeclareSizeIncrease(delta uintptr) error {
+func (mon *Monitor) DeclareSizeIncrease(delta uintptr, where string) error {
 	if mon.err != nil {
 		return mon.err
 	}
 	atomic.AddUintptr(&mon.locationsUsed, delta)
 	if mon.locationsUsed >= mon.locationsCap {
-		mon.err = fmt.Errorf("too much memory used, failed to allocate another %d locations", delta)
+		mon.err = fmt.Errorf("too much memory used: %s failed to allocate another %d locations after %d steps", where, delta, mon.steps)
 		return mon.err
 	}
 	return nil
