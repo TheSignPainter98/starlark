@@ -1370,17 +1370,18 @@ func Len(x Value) int {
 	return -1
 }
 
-func IterableLen(i Iterable) int {
-	if len := Len(i); 0 <= len {
+func IterableLen(v Value) int {
+	if len := Len(v); 0 <= len {
 		return len
 	}
 
-	iter := i.Iterate()
-	defer iter.Done()
-	len := 0
-	var __ Value
-	for iter.Next(&__) {
-		len++
+	var len int
+	if iter := Iterate(v); iter != nil {
+		defer iter.Done()
+		var dummy Value
+		for iter.Next(&dummy) {
+			len++
+		}
 	}
 	return len
 }
