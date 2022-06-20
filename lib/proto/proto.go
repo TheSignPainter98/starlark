@@ -183,6 +183,9 @@ func file(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kw
 		return nil, err
 	}
 
+	if err := thread.DeclareSizeIncrease(1, fn.Name()); err != nil {
+		return nil, err
+	}
 	return FileDescriptor{Desc: desc}, nil
 }
 
@@ -218,11 +221,12 @@ func has(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwa
 		return nil, fmt.Errorf("%s: for field argument, got %s, want string or proto.FieldDescriptor", fn.Name(), field.Type())
 	}
 
+	// TODO(kcza): track location usage
 	return starlark.Bool(msg.msg.Has(fdesc)), nil
 }
 
 // marshal{,_text}(msg) encodes a Message value to binary or text form.
-func marshal(_ *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func marshal(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var m *Message
 	if err := starlark.UnpackPositionalArgs(fn.Name(), args, kwargs, 1, &m); err != nil {
 		return nil, err
@@ -232,11 +236,17 @@ func marshal(_ *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwar
 		if err != nil {
 			return nil, fmt.Errorf("%s: %v", fn.Name(), err)
 		}
+		if err := thread.DeclareSizeIncrease(uintptr(len(data)), fn.Name()); err != nil {
+			return nil, err
+		}
 		return starlark.Bytes(data), nil
 	} else {
 		text, err := prototext.MarshalOptions{Indent: "  "}.Marshal(m.Message())
 		if err != nil {
 			return nil, fmt.Errorf("%s: %v", fn.Name(), err)
+		}
+		if err := thread.DeclareSizeIncrease(uintptr(len(text)), fn.Name()); err != nil {
+			return nil, err
 		}
 		return starlark.String(text), nil
 	}
@@ -249,6 +259,7 @@ func unmarshal(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tupl
 	if err := starlark.UnpackPositionalArgs(fn.Name(), args, kwargs, 2, &desc, &data); err != nil {
 		return nil, err
 	}
+	// TODO(kcza): track location usage
 	return unmarshalData(desc.Desc, []byte(data), true)
 }
 
@@ -259,6 +270,7 @@ func unmarshal_text(thread *starlark.Thread, fn *starlark.Builtin, args starlark
 	if err := starlark.UnpackPositionalArgs(fn.Name(), args, kwargs, 2, &desc, &data); err != nil {
 		return nil, err
 	}
+	// TODO(kcza): track location usage
 	return unmarshalData(desc.Desc, []byte(data), false)
 }
 
@@ -333,6 +345,7 @@ func (d MessageDescriptor) CallInternal(thread *starlark.Thread, args starlark.T
 			}
 
 			// Make shallow copy of message.
+			// TODO(kcza): track location usage
 			// TODO(adonovan): How does frozen work if we have shallow copy?
 			src.msg.Range(func(fdesc protoreflect.FieldDescriptor, v protoreflect.Value) bool {
 				dest.msg.Set(fdesc, v)
@@ -436,6 +449,7 @@ func toProto(fdesc protoreflect.FieldDescriptor, v starlark.Value) (protoreflect
 	case protoreflect.BoolKind:
 		// To avoid mistakes, we require v be exactly a bool.
 		if v, ok := v.(starlark.Bool); ok {
+			// TODO(kcza): track location usage
 			return protoreflect.ValueOfBool(bool(v)), nil
 		}
 
@@ -443,6 +457,7 @@ func toProto(fdesc protoreflect.FieldDescriptor, v starlark.Value) (protoreflect
 		protoreflect.Uint32Kind:
 		// uint32
 		if i, ok := v.(starlark.Int); ok {
+			// TODO(kcza): track location usage
 			if u, ok := i.Uint64(); ok && uint64(uint32(u)) == u {
 				return protoreflect.ValueOfUint32(uint32(u)), nil
 			}
@@ -454,6 +469,7 @@ func toProto(fdesc protoreflect.FieldDescriptor, v starlark.Value) (protoreflect
 		protoreflect.Sint32Kind:
 		// int32
 		if i, ok := v.(starlark.Int); ok {
+			// TODO(kcza): track location usage
 			if i, ok := i.Int64(); ok && int64(int32(i)) == i {
 				return protoreflect.ValueOfInt32(int32(i)), nil
 			}
@@ -464,6 +480,7 @@ func toProto(fdesc protoreflect.FieldDescriptor, v starlark.Value) (protoreflect
 		protoreflect.Fixed64Kind:
 		// uint64
 		if i, ok := v.(starlark.Int); ok {
+			// TODO(kcza): track location usage
 			if u, ok := i.Uint64(); ok {
 				return protoreflect.ValueOfUint64(u), nil
 			}
@@ -475,6 +492,7 @@ func toProto(fdesc protoreflect.FieldDescriptor, v starlark.Value) (protoreflect
 		protoreflect.Sint64Kind:
 		// int64
 		if i, ok := v.(starlark.Int); ok {
+			// TODO(kcza): track location usage
 			if i, ok := i.Int64(); ok {
 				return protoreflect.ValueOfInt64(i), nil
 			}
@@ -483,35 +501,43 @@ func toProto(fdesc protoreflect.FieldDescriptor, v starlark.Value) (protoreflect
 
 	case protoreflect.StringKind:
 		if s, ok := starlark.AsString(v); ok {
+			// TODO(kcza): track location usage
 			return protoreflect.ValueOfString(s), nil
 		} else if b, ok := v.(starlark.Bytes); ok {
+			// TODO(kcza): track location usage
 			// TODO(adonovan): allow bytes for string? Not friendly to a Java port.
 			return protoreflect.ValueOfBytes([]byte(b)), nil
 		}
 
 	case protoreflect.BytesKind:
 		if s, ok := starlark.AsString(v); ok {
+			// TODO(kcza): track location usage
 			// TODO(adonovan): don't allow string for bytes: it's hostile to a Java port.
 			// Instead provide b"..." literals in the core
 			// and a bytes(str) conversion.
 			return protoreflect.ValueOfBytes([]byte(s)), nil
 		} else if b, ok := v.(starlark.Bytes); ok {
+			// TODO(kcza): track location usage
 			return protoreflect.ValueOfBytes([]byte(b)), nil
 		}
 
 	case protoreflect.DoubleKind:
 		switch v := v.(type) {
 		case starlark.Float:
+			// TODO(kcza): track location usage
 			return protoreflect.ValueOfFloat64(float64(v)), nil
 		case starlark.Int:
+			// TODO(kcza): track location usage
 			return protoreflect.ValueOfFloat64(float64(v.Float())), nil
 		}
 
 	case protoreflect.FloatKind:
 		switch v := v.(type) {
 		case starlark.Float:
+			// TODO(kcza): track location usage
 			return protoreflect.ValueOfFloat32(float32(v)), nil
 		case starlark.Int:
+			// TODO(kcza): track location usage
 			return protoreflect.ValueOfFloat32(float32(v.Float())), nil
 		}
 
@@ -524,9 +550,11 @@ func toProto(fdesc protoreflect.FieldDescriptor, v starlark.Value) (protoreflect
 			if desc != v.desc() {
 				return noValue, fmt.Errorf("got %s, want %s", v.desc().FullName(), desc.FullName())
 			}
+			// TODO(kcza): track location usage
 			return protoreflect.ValueOfMessage(v.msg), nil // alias it directly
 
 		case *starlark.Dict:
+			// TODO(kcza): track location usage
 			dest := newMessage(desc)
 			err := setFields(dest, v.Items())
 			return protoreflect.ValueOfMessage(dest), err
@@ -537,6 +565,7 @@ func toProto(fdesc protoreflect.FieldDescriptor, v starlark.Value) (protoreflect
 		if err != nil {
 			return noValue, err
 		}
+		// TODO(kcza): track location usage
 		return protoreflect.ValueOfEnum(enumval.Number()), nil
 	}
 
@@ -933,6 +962,7 @@ func (it *repeatedFieldIterator) Done() {
 func writeString(buf *bytes.Buffer, fdesc protoreflect.FieldDescriptor, v protoreflect.Value) {
 	// TODO(adonovan): opt: don't materialize the Starlark value.
 	// TODO(adonovan): skip message type when printing submessages? {...}?
+	// TODO(kcza): track location usage
 	var frozen bool // ignored
 	x := toStarlark(fdesc, v, &frozen)
 	buf.WriteString(x.String())
