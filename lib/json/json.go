@@ -88,16 +88,23 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	buf := new(bytes.Buffer)
 
 	var quoteSpace [128]byte
-	quote := func(s string) {
+	quote := func(s string) (err error) {
 		// Non-trivial escaping is handled by Go's encoding/json.
 		if isPrintableASCII(s) {
+			if err = thread.DeclareSizeIncrease(2*uintptr(len(s)), b.Name()); err != nil {
+				return
+			}
 			buf.Write(strconv.AppendQuote(quoteSpace[:0], s))
 		} else {
 			// TODO(adonovan): opt: RFC 8259 mandates UTF-8 for JSON.
 			// Can we avoid this call?
 			data, _ := json.Marshal(s)
+			if err = thread.DeclareSizeIncrease(uintptr(len(data)), b.Name()); err != nil {
+				return
+			}
 			buf.Write(data)
 		}
+		return
 	}
 
 	var emit func(x starlark.Value) error
@@ -110,32 +117,59 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			if err != nil {
 				return err
 			}
+			if err := thread.DeclareSizeIncrease(uintptr(len(data)), b.Name()); err != nil {
+				return err
+			}
 			buf.Write(data)
 
 		case starlark.NoneType:
-			buf.WriteString("null")
+			str := "null"
+			if err := thread.DeclareSizeIncrease(uintptr(len(str)), b.Name()); err != nil {
+				return err
+			}
+			buf.WriteString(str)
 
 		case starlark.Bool:
+			var str string
 			if x {
-				buf.WriteString("true")
+				str = "true"
 			} else {
-				buf.WriteString("false")
+				str = "false"
 			}
+			if err := thread.DeclareSizeIncrease(uintptr(len(str)), b.Name()); err != nil {
+				return err
+			}
+			buf.WriteString(str)
 
 		case starlark.Int:
-			fmt.Fprint(buf, x)
+			nrunes, err := fmt.Fprint(buf, x)
+			if err != nil {
+				return err
+			}
+			if err := thread.DeclareSizeIncrease(uintptr(nrunes), b.Name()); err != nil {
+				return err
+			}
 
 		case starlark.Float:
 			if !isFinite(float64(x)) {
 				return fmt.Errorf("cannot encode non-finite float %v", x)
 			}
-			fmt.Fprintf(buf, "%g", x) // always contains a decimal point
+			nrunes, err := fmt.Fprintf(buf, "%g", x) // always contains a decimal point
+			if err != nil {
+				return err
+			}
+			if err := thread.DeclareSizeIncrease(uintptr(nrunes), b.Name()); err != nil {
+				return err
+			}
 
 		case starlark.String:
 			quote(string(x))
 
 		case starlark.IterableMapping:
 			// e.g. dict (must have string keys)
+			if err := thread.DeclareSizeIncrease(2, b.Name()); err != nil {
+				return err
+			}
 			buf.WriteByte('{')
 			items := x.Items()
 			for _, item := range items {
@@ -148,10 +182,16 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			})
 			for i, item := range items {
 				if i > 0 {
+					if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+						return err
+					}
 					buf.WriteByte(',')
 				}
 				k, _ := starlark.AsString(item[0])
 				quote(k)
+				if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+					return err
+				}
 				buf.WriteByte(':')
 				if err := emit(item[1]); err != nil {
 					return fmt.Errorf("in %s key %s: %v", x.Type(), item[0], err)
@@ -161,12 +201,18 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 
 		case starlark.Iterable:
 			// e.g. tuple, list
+			if err := thread.DeclareSizeIncrease(2, b.Name()); err != nil {
+				return err
+			}
 			buf.WriteByte('[')
 			iter := x.Iterate()
 			defer iter.Done()
 			var elem starlark.Value
 			for i := 0; iter.Next(&elem); i++ {
 				if i > 0 {
+					if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+						return err
+					}
 					buf.WriteByte(',')
 				}
 				if err := emit(elem); err != nil {
@@ -177,6 +223,9 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 
 		case starlark.HasAttrs:
 			// e.g. struct
+			if err := thread.DeclareSizeIncrease(2, b.Name()); err != nil {
+				return err
+			}
 			buf.WriteByte('{')
 			var names []string
 			names = append(names, x.AttrNames()...)
@@ -187,9 +236,15 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 					log.Fatalf("internal error: dir(%s) includes %q but value has no .%s field", x.Type(), name, name)
 				}
 				if i > 0 {
+					if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+						return err
+					}
 					buf.WriteByte(',')
 				}
 				quote(name)
+				if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+					return err
+				}
 				buf.WriteByte(':')
 				if err := emit(v); err != nil {
 					return fmt.Errorf("in field .%s: %v", name, err)
@@ -205,6 +260,9 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 
 	if err := emit(x); err != nil {
 		return nil, fmt.Errorf("%s: %v", b.Name(), err)
+	}
+	if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+		return nil, err
 	}
 	return starlark.String(buf.String()), nil
 }
@@ -240,17 +298,27 @@ func indent(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	}
 
 	buf := new(bytes.Buffer)
+	initialLen := uintptr(len(str))
+	if err := thread.DeclareSizeIncrease(1+initialLen, b.Name()); err != nil {
+		return nil, err
+	}
 	if err := json.Indent(buf, []byte(str), prefix, indent); err != nil {
 		return nil, fmt.Errorf("%s: %v", b.Name(), err)
+	}
+	if delta := uintptr(buf.Len()) - initialLen; delta > 0 {
+		if err := thread.DeclareSizeIncrease(delta, b.Name()); err != nil {
+			return nil, err
+		}
 	}
 	return starlark.String(buf.String()), nil
 }
 
-func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (_ starlark.Value, err error) {
+func decode(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (_ starlark.Value, err error) {
 	var s string
-	if err := starlark.UnpackPositionalArgs(b.Name(), args, kwargs, 1, &s); err != nil {
+	if err := starlark.UnpackPositionalArgs(builtin.Name(), args, kwargs, 1, &s); err != nil {
 		return nil, err
 	}
+	// TODO(kcza): track location usage
 
 	// The decoder necessarily makes certain representation choices
 	// such as list vs tuple, struct vs dict, int vs float.
@@ -324,8 +392,13 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 
 			// unquote
 			if safe {
+				if err := thread.DeclareSizeIncrease(uintptr(len(r)-2), builtin.Name()); err != nil {
+					fail("%s", err)
+				}
 				r = r[1 : len(r)-1]
 			} else if err := json.Unmarshal([]byte(r), &r); err != nil {
+				fail("%s", err)
+			} else if err := thread.DeclareSizeIncrease(uintptr(1+len(r)), builtin.Name()); err != nil {
 				fail("%s", err)
 			}
 			return starlark.String(r)
@@ -357,6 +430,9 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			if b != ']' {
 				for {
 					elem := parse()
+					if err := thread.DeclareSizeIncrease(1, builtin.Name()); err != nil {
+						fail("%s", err)
+					}
 					elems = append(elems, elem)
 					b = next()
 					if b != ',' {
@@ -369,10 +445,16 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 				}
 			}
 			i++ // ']'
+			if err := thread.DeclareSizeIncrease(1, builtin.Name()); err != nil {
+				fail("%s", err)
+			}
 			return starlark.NewList(elems)
 
 		case '{':
 			// object
+			if err := thread.DeclareSizeIncrease(1, builtin.Name()); err != nil {
+				fail("%s", err)
+			}
 			dict := new(starlark.Dict)
 
 			i++ // '{'
@@ -389,6 +471,9 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 					}
 					i++ // ':'
 					value := parse()
+					if err := thread.DeclareSizeIncrease(1, builtin.Name()); err != nil {
+						fail("%s", err)
+					}
 					dict.SetKey(key, value) // can't fail
 					b = next()
 					if b != ',' {
@@ -434,6 +519,10 @@ func decode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 				}
 				if digits == "" || digits[0] == '0' && len(digits) > 1 && isdigit(digits[1]) {
 					fail("invalid number: %s", num)
+				}
+
+				if err := thread.DeclareSizeIncrease(1, builtin.Name()); err != nil {
+					fail("%s", err)
 				}
 
 				// parse literal

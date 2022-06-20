@@ -130,6 +130,9 @@ func newUnaryBuiltin(name string, fn func(float64) float64) *starlark.Builtin {
 		if err := starlark.UnpackPositionalArgs(name, args, kwargs, 1, &x); err != nil {
 			return nil, err
 		}
+		if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+			return nil, err
+		}
 		return starlark.Float(fn(float64(x))), nil
 	})
 }
@@ -140,6 +143,9 @@ func newBinaryBuiltin(name string, fn func(float64, float64) float64) *starlark.
 	return starlark.NewBuiltin(name, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 		var x, y floatOrInt
 		if err := starlark.UnpackPositionalArgs(name, args, kwargs, 2, &x, &y); err != nil {
+			return nil, err
+		}
+		if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
 			return nil, err
 		}
 		return starlark.Float(fn(float64(x), float64(y))), nil
@@ -159,10 +165,13 @@ func log(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwar
 	if base == 1 {
 		return nil, errors.New("division by zero")
 	}
+	if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+		return nil, err
+	}
 	return starlark.Float(math.Log(float64(x)) / math.Log(float64(base))), nil
 }
 
-func ceil(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func ceil(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var x starlark.Value
 
 	if err := starlark.UnpackPositionalArgs("ceil", args, kwargs, 1, &x); err != nil {
@@ -173,13 +182,16 @@ func ceil(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwa
 	case starlark.Int:
 		return t, nil
 	case starlark.Float:
+		if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+			return nil, err
+		}
 		return starlark.NumberToInt(starlark.Float(math.Ceil(float64(t))))
 	}
 
 	return nil, fmt.Errorf("got %s, want float or int", x.Type())
 }
 
-func floor(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func floor(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var x starlark.Value
 
 	if err := starlark.UnpackPositionalArgs("floor", args, kwargs, 1, &x); err != nil {
@@ -190,6 +202,9 @@ func floor(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kw
 	case starlark.Int:
 		return t, nil
 	case starlark.Float:
+		if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+			return nil, err
+		}
 		return starlark.NumberToInt(starlark.Float(math.Floor(float64(t))))
 	}
 

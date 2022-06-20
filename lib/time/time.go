@@ -79,16 +79,19 @@ func parseDuration(thread *starlark.Thread, _ *starlark.Builtin, args starlark.T
 	return d, err
 }
 
-func isValidTimezone(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func isValidTimezone(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var s string
 	if err := starlark.UnpackPositionalArgs("is_valid_timezone", args, kwargs, 1, &s); err != nil {
+		return nil, err
+	}
+	if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
 		return nil, err
 	}
 	_, err := time.LoadLocation(s)
 	return starlark.Bool(err == nil), nil
 }
 
-func parseTime(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func parseTime(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var (
 		x        string
 		location = "UTC"
@@ -103,6 +106,9 @@ func parseTime(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple
 		if err != nil {
 			return nil, err
 		}
+		if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+			return nil, err
+		}
 		return Time(t), nil
 	}
 
@@ -114,10 +120,13 @@ func parseTime(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple
 	if err != nil {
 		return nil, err
 	}
+	if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+		return nil, err
+	}
 	return Time(t), nil
 }
 
-func fromTimestamp(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func fromTimestamp(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var (
 		sec  int64
 		nsec int64 = 0
@@ -125,10 +134,16 @@ func fromTimestamp(thread *starlark.Thread, _ *starlark.Builtin, args starlark.T
 	if err := starlark.UnpackPositionalArgs("from_timestamp", args, kwargs, 1, &sec, &nsec); err != nil {
 		return nil, err
 	}
+	if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+		return nil, err
+	}
 	return Time(time.Unix(sec, nsec)), nil
 }
 
-func now(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func now(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+		return nil, err
+	}
 	return Time(NowFunc()), nil
 }
 
@@ -150,6 +165,7 @@ func (d *Duration) Unpack(v starlark.Value) error {
 			return err
 		}
 
+		// TODO(kcza): track location usage
 		*d = Duration(dur)
 		return nil
 	}
@@ -233,6 +249,7 @@ func (d Duration) CompareSameType(op syntax.Token, v starlark.Value, depth int) 
 //    duration * int = duration
 func (d Duration) Binary(op syntax.Token, y starlark.Value, side starlark.Side) (starlark.Value, error) {
 	x := time.Duration(d)
+	// TODO(kcza): track location usage
 
 	switch op {
 	case syntax.PLUS:
@@ -302,7 +319,7 @@ func (d Duration) Binary(op syntax.Token, y starlark.Value, side starlark.Side) 
 // Time is a Starlark representation of a moment in time.
 type Time time.Time
 
-func newTime(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func newTime(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var (
 		year, month, day, hour, min, sec, nsec int
 		loc                                    string
@@ -324,6 +341,9 @@ func newTime(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, 
 	}
 	location, err := time.LoadLocation(loc)
 	if err != nil {
+		return nil, err
+	}
+	if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
 		return nil, err
 	}
 	return Time(time.Date(year, time.Month(month), day, hour, min, sec, nsec, location)), nil
@@ -395,6 +415,7 @@ func (t Time) AttrNames() []string {
 // CompareSameType implements comparison of two Time values. required by
 // starlark.Comparable interface.
 func (t Time) CompareSameType(op syntax.Token, yV starlark.Value, depth int) (bool, error) {
+	// TODO(kcza): track location usage
 	x := time.Time(t)
 	y := time.Time(yV.(Time))
 	cmp := 0
@@ -413,6 +434,7 @@ func (t Time) CompareSameType(op syntax.Token, yV starlark.Value, depth int) (bo
 //    time - time = duration
 func (t Time) Binary(op syntax.Token, y starlark.Value, side starlark.Side) (starlark.Value, error) {
 	x := time.Time(t)
+	// TODO(kcza): track location usage
 
 	switch op {
 	case syntax.PLUS:
@@ -443,6 +465,7 @@ func timeFormat(fnname string, recV starlark.Value, args starlark.Tuple, kwargs 
 	if err := starlark.UnpackPositionalArgs("format", args, kwargs, 1, &x); err != nil {
 		return nil, err
 	}
+	// TODO(kcza): track location usage
 
 	recv := time.Time(recV.(Time))
 	return starlark.String(recv.Format(x)), nil
@@ -457,6 +480,7 @@ func timeIn(fnname string, recV starlark.Value, args starlark.Tuple, kwargs []st
 	if err != nil {
 		return nil, err
 	}
+	// TODO(kcza): track location usage
 
 	recv := time.Time(recV.(Time))
 	return Time(recv.In(loc)), nil
