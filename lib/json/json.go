@@ -163,7 +163,7 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 			}
 
 		case starlark.String:
-			quote(string(x))
+			return quote(string(x))
 
 		case starlark.IterableMapping:
 			// e.g. dict (must have string keys)
@@ -188,7 +188,9 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 					buf.WriteByte(',')
 				}
 				k, _ := starlark.AsString(item[0])
-				quote(k)
+				if err := quote(k); err != nil {
+					return err
+				}
 				if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
 					return err
 				}
@@ -241,7 +243,9 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 					}
 					buf.WriteByte(',')
 				}
-				quote(name)
+				if err := quote(name); err != nil {
+					return err
+				}
 				if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
 					return err
 				}
