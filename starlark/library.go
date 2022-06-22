@@ -312,7 +312,7 @@ func dict(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 		return nil, err
 	}
 	dict := new(Dict)
-	if err := updateDict(&thread.Monitor, dict, args, kwargs); err != nil {
+	if err := updateDict(thread, dict, args, kwargs); err != nil {
 		return nil, fmt.Errorf("dict: %v", err)
 	}
 	return dict, nil
@@ -1453,7 +1453,7 @@ func dict_update(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value,
 	if len(args) > 1 {
 		return nil, fmt.Errorf("update: got %d arguments, want at most 1", len(args))
 	}
-	if err := updateDict(&thread.Monitor, b.Receiver().(*Dict), args, kwargs); err != nil {
+	if err := updateDict(thread, b.Receiver().(*Dict), args, kwargs); err != nil {
 		return nil, fmt.Errorf("update: %v", err)
 	}
 	return None, nil
@@ -2498,13 +2498,13 @@ func string_find_impl(b *Builtin, args Tuple, kwargs []Tuple, allowError, last b
 
 // Common implementation of builtin dict function and dict.update method.
 // Precondition: len(updates) == 0 or 1.
-func updateDict(mon *Monitor, dict *Dict, updates Tuple, kwargs []Tuple) error {
+func updateDict(thread *Thread, dict *Dict, updates Tuple, kwargs []Tuple) error {
 	if len(updates) == 1 {
 		switch updates := updates[0].(type) {
 		case IterableMapping:
 			// Iterate over dict's key/value pairs, not just keys.
 			for _, item := range updates.Items() {
-				if err := mon.DeclareSizeIncrease(1, "updateDict"); err != nil {
+				if err := thread.DeclareSizeIncrease(1, "updateDict"); err != nil {
 					return err
 				}
 				if err := dict.SetKey(item[0], item[1]); err != nil {
@@ -2535,7 +2535,7 @@ func updateDict(mon *Monitor, dict *Dict, updates Tuple, kwargs []Tuple) error {
 				var k, v Value
 				iter2.Next(&k)
 				iter2.Next(&v)
-				if err := mon.DeclareSizeIncrease(1, "updateDict"); err != nil {
+				if err := thread.DeclareSizeIncrease(1, "updateDict"); err != nil {
 					return err
 				}
 				if err := dict.SetKey(k, v); err != nil {
@@ -2547,7 +2547,7 @@ func updateDict(mon *Monitor, dict *Dict, updates Tuple, kwargs []Tuple) error {
 
 	// Then add the kwargs.
 	before := dict.Len()
-	if err := mon.DeclareSizeIncrease(uintptr(len(kwargs)), "updateDict"); err != nil {
+	if err := thread.DeclareSizeIncrease(uintptr(len(kwargs)), "updateDict"); err != nil {
 		return err
 	}
 	for _, pair := range kwargs {
@@ -2559,7 +2559,7 @@ func updateDict(mon *Monitor, dict *Dict, updates Tuple, kwargs []Tuple) error {
 	// In the common case, each kwarg will add another dict entry.
 	// If that's not so, check whether it is because there was a duplicate kwarg.
 	if dict.Len() < before+len(kwargs) {
-		if err := mon.DeclareSizeIncrease(uintptr(len(kwargs)), "updateDict"); err != nil {
+		if err := thread.DeclareSizeIncrease(uintptr(len(kwargs)), "updateDict"); err != nil {
 			return err
 		}
 		keys := make(map[String]bool, len(kwargs))

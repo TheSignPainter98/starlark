@@ -93,7 +93,7 @@ func (th *Thread) ExecutionSteps() uint64 {
 // thread.Cancel("too many steps").
 func (th *Thread) SetMaxExecutionSteps(max uint64) error {
 	if th.InUse() {
-		return errors.New("cannot change execution steps of a monitor already in use")
+		return errors.New("cannot change execution steps of a thread already in use")
 	}
 	th.maxSteps = max
 	return nil
@@ -105,7 +105,7 @@ func (th *Thread) Allocations() uintptr {
 
 func (th *Thread) SetMaxAllocations(max uintptr) error {
 	if th.InUse() {
-		return errors.New("cannot change memory cap of a monitor already in use")
+		return errors.New("cannot change memory cap of a thread already in use")
 	}
 	th.maxAllocations = max
 	return nil
