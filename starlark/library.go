@@ -428,15 +428,12 @@ func float(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error
 	}
 	switch x := args[0].(type) {
 	case Bool:
+		if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+			return nil, err
+		}
 		if x {
-			if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
-				return nil, err
-			}
 			return Float(1.0), nil
 		} else {
-			if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
-				return nil, err
-			}
 			return Float(0.0), nil
 		}
 	case Int:
