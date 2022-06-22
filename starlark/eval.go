@@ -35,7 +35,7 @@ var (
 	UNIT_SIZE = reflect.TypeOf(uintptr(0)).Size() * UINTPTRS_PER_UNIT
 )
 
-var DefaultLocationsCap = flag.Uint64("memcap", 1<<15-1, "set max usable `locations`")
+var DefaultAllocationCap = flag.Uint64("memcap", 1<<15-1, "set max usable `locations`")
 
 // A Thread contains the state of a Starlark thread,
 // such as its call stack and thread-local storage.
@@ -63,8 +63,8 @@ type Thread struct {
 	// steps counts the number of execution steps taken within the Starlark program
 	steps, maxSteps uint64
 
-	// locationsUsed counts the abstract memory units claimed by this resource pool
-	locationsUsed, locationsCap uintptr
+	// allocations counts the abstract memory units claimed by this resource pool
+	allocations, maxAllocations uintptr
 
 	// cancelReason records the reason from the first call to Cancel.
 	cancelReason *string
@@ -99,15 +99,15 @@ func (th *Thread) SetMaxExecutionSteps(max uint64) error {
 	return nil
 }
 
-func (th *Thread) LocationsUsed() uintptr {
-	return th.locationsUsed
+func (th *Thread) Allocations() uintptr {
+	return th.allocations
 }
 
-func (th *Thread) SetLocationsCap(max uintptr) error {
+func (th *Thread) SetMaxAllocations(max uintptr) error {
 	if th.InUse() {
 		return errors.New("cannot change memory cap of a monitor already in use")
 	}
-	th.locationsCap = max
+	th.maxAllocations = max
 	return nil
 }
 
@@ -1237,11 +1237,11 @@ func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
 	if thread.stack == nil {
 		// one-time initialization of thread
 
-		if thread.locationsCap == 0 {
-			if dflt := uintptr(*DefaultLocationsCap); dflt != 0 {
-				thread.locationsCap = dflt
+		if thread.maxAllocations == 0 {
+			if dflt := uintptr(*DefaultAllocationCap); dflt != 0 {
+				thread.maxAllocations = dflt
 			} else {
-				thread.locationsCap-- // MaxUintptr
+				thread.maxAllocations-- // MaxUintptr
 			}
 		}
 
@@ -1673,9 +1673,8 @@ func (th *Thread) DeclareSizeIncrease(delta uintptr, whence string) error {
 		reason := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&th.cancelReason)))
 		return fmt.Errorf("Starlark computation cancelled: %s", *(*string)(reason))
 	}
-	fmt.Printf("> Allocating %d more... (currently %d/%d): %s\n", delta, th.locationsUsed, th.locationsCap, whence)
-	atomic.AddUintptr(&th.locationsUsed, delta)
-	if th.locationsUsed >= th.locationsCap {
+	atomic.AddUintptr(&th.allocations, delta)
+	if th.allocations >= th.maxAllocations {
 		reason := fmt.Sprintf("too much memory used: %s failed to allocate another %d locations after %d steps", whence, delta, th.steps)
 		th.Cancel(reason)
 		return errors.New(reason)
@@ -1688,7 +1687,7 @@ func (th *Thread) DeclareSizeDecrease(delta uintptr) {
 		return
 	}
 	// fmt.Printf("Freeing %d...\n", delta)
-	atomic.AddUintptr(&th.locationsUsed, -delta)
+	atomic.AddUintptr(&th.allocations, -delta)
 }
 
 //func SizeOf(obj interface{}) (size uintptr) {
