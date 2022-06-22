@@ -90,10 +90,8 @@ func (fn *Function) CallInternal(thread *Thread, args Tuple, kwargs []Tuple) (Va
 	code := f.Code
 loop:
 	for {
-		thread.countStep()
-		if err := thread.CheckUsage(); err != nil {
-			thread.Cancel(err.Error())
-		}
+		thread.steps++
+		thread.checkUsage()
 		if reason := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&thread.cancelReason))); reason != nil {
 			err = fmt.Errorf("Starlark computation cancelled: %s", *(*string)(reason))
 			break loop
