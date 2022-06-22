@@ -5,11 +5,14 @@
 package starlark
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"math/big"
+	"reflect"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -23,6 +26,16 @@ import (
 	"go.starlark.net/resolve"
 	"go.starlark.net/syntax"
 )
+
+const (
+	UINTPTRS_PER_UNIT = 4
+)
+
+var (
+	UNIT_SIZE = reflect.TypeOf(uintptr(0)).Size() * UINTPTRS_PER_UNIT
+)
+
+var DefaultLocationsCap = flag.Uint64("memcap", 1<<15-1, "set max usable `locations`")
 
 // A Thread contains the state of a Starlark thread,
 // such as its call stack and thread-local storage.
@@ -47,8 +60,11 @@ type Thread struct {
 	// See example_test.go for some example implementations of Load.
 	Load func(thread *Thread, module string) (StringDict, error)
 
-	// Monitors resource usage to enforce bound compliance
-	Monitor
+	// steps counts the number of execution steps taken within the Starlark program
+	steps, maxSteps uint64
+
+	// locationsUsed counts the abstract memory units claimed by this resource pool
+	locationsUsed, locationsCap uintptr
 
 	// cancelReason records the reason from the first call to Cancel.
 	cancelReason *string
@@ -59,6 +75,40 @@ type Thread struct {
 
 	// proftime holds the accumulated execution time since the last profile event.
 	proftime time.Duration
+}
+
+// ExecutionSteps returns a count of abstract computation steps executed
+// by this thread. It is incremented by the interpreter. It may be used
+// as a measure of the approximate cost of Starlark execution, by
+// computing the difference in its value before and after a computation.
+//
+// The precise meaning of "step" is not specified and may change.
+func (th *Thread) ExecutionSteps() uint64 {
+	return th.steps
+}
+
+// SetMaxExecutionSteps sets a limit on the number of Starlark
+// computation steps that may be executed by this thread. If the
+// thread's step counter exceeds this limit, the interpreter calls
+// thread.Cancel("too many steps").
+func (th *Thread) SetMaxExecutionSteps(max uint64) error {
+	if th.InUse() {
+		return errors.New("cannot change execution steps of a monitor already in use")
+	}
+	th.maxSteps = max
+	return nil
+}
+
+func (th *Thread) LocationsUsed() uintptr {
+	return th.locationsUsed
+}
+
+func (th *Thread) SetLocationsCap(max uintptr) error {
+	if th.InUse() {
+		return errors.New("cannot change memory cap of a monitor already in use")
+	}
+	th.locationsCap = max
+	return nil
 }
 
 // Cancel causes execution of Starlark code in the specified thread to
@@ -1186,7 +1236,18 @@ func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
 
 	if thread.stack == nil {
 		// one-time initialization of thread
-		thread.initMonitor()
+
+		if thread.locationsCap == 0 {
+			if dflt := uintptr(*DefaultLocationsCap); dflt != 0 {
+				thread.locationsCap = dflt
+			} else {
+				thread.locationsCap-- // MaxUintptr
+			}
+		}
+
+		if thread.maxSteps == 0 {
+			thread.maxSteps-- // (MaxUint64)
+		}
 	}
 
 	thread.stack = append(thread.stack, fr) // push
@@ -1595,4 +1656,416 @@ func interpolate(format string, x Value) (Value, error) {
 	}
 
 	return String(buf.String()), nil
+}
+
+func (th *Thread) checkUsage() {
+	if th.steps >= th.maxSteps {
+		th.Cancel("too many steps")
+	}
+}
+
+func (th *Thread) InUse() bool {
+	return th.steps > 0
+}
+
+func (th *Thread) DeclareSizeIncrease(delta uintptr, whence string) error {
+	if th.cancelReason != nil {
+		reason := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&th.cancelReason)))
+		return fmt.Errorf("Starlark computation cancelled: %s", *(*string)(reason))
+	}
+	fmt.Printf("> Allocating %d more... (currently %d/%d): %s\n", delta, th.locationsUsed, th.locationsCap, whence)
+	atomic.AddUintptr(&th.locationsUsed, delta)
+	if th.locationsUsed >= th.locationsCap {
+		reason := fmt.Sprintf("too much memory used: %s failed to allocate another %d locations after %d steps", whence, delta, th.steps)
+		th.Cancel(reason)
+		return errors.New(reason)
+	}
+	return nil
+}
+
+func (th *Thread) DeclareSizeDecrease(delta uintptr) {
+	if th.cancelReason != nil {
+		return
+	}
+	// fmt.Printf("Freeing %d...\n", delta)
+	atomic.AddUintptr(&th.locationsUsed, -delta)
+}
+
+//func SizeOf(obj interface{}) (size uintptr) {
+//	if o, ok := obj.(Sized); ok {
+//		if osize := o.Size(); osize >= 0 {
+//			size += FootPrint(o, false) + osize
+//		}
+//	} else {
+//		size += EstimateSizeOf(obj)
+//	}
+//	return
+//}
+
+//func EstimateSizeOf(v interface{}) uintptr {
+//	// TODO(kcza): possible to be smarter with reflections?
+//	// Tags could be useful here to mark which values are (not) to be considered
+//	// Can skip fields whose values implement Value
+//	// Handle common cases: strings, pointers, slices/arrays
+//	if t, ok := v.(reflect.Type); ok {
+//		return t.Size()
+//	}
+//	return FootPrint(v, true)
+//}
+
+//// Compute the memory footprint of the top level of a given value. All returned
+//// values v are rounded: v = math.Ceil(v / UNIT_SIZE). If `resolve_indirection` is true and a pointer values has been passed
+////
+//// - The footprint of arrays, maps and strings are proportional to their length.
+//// - The footprint of channels and slices are proportional to their capacity.
+//// - The footprint of values with invalid kind is a single unit
+//// - The footprint of all other values proportional to their size in bytes
+//func FootPrint(v interface{}, resolve_indirection bool) uintptr {
+//	vval := reflect.ValueOf(v)
+//	if !vval.IsValid() {
+//		return 1
+//	}
+//	if resolve_indirection {
+//		vval = reflect.Indirect(vval)
+//	}
+
+//	vtype := vval.Type()
+//	if vtype == nil {
+//		return 1
+//	}
+//	vkind := vtype.Kind()
+
+//	var rawFootprint uintptr
+//	footprintFuncs := []func(reflect.Value, reflect.Type) uintptr{
+//		reflect.Invalid:       nil,
+//		reflect.Bool:          footprintSingleBlock,
+//		reflect.Int:           footprintSingleBlock,
+//		reflect.Int8:          footprintSingleBlock,
+//		reflect.Int16:         footprintSingleBlock,
+//		reflect.Int32:         footprintSingleBlock,
+//		reflect.Int64:         footprintSingleBlock,
+//		reflect.Uint:          footprintSingleBlock,
+//		reflect.Uint8:         footprintSingleBlock,
+//		reflect.Uint16:        footprintSingleBlock,
+//		reflect.Uint32:        footprintSingleBlock,
+//		reflect.Uint64:        footprintSingleBlock,
+//		reflect.Uintptr:       footprintSingleBlock,
+//		reflect.Float32:       footprintSingleBlock,
+//		reflect.Float64:       footprintSingleBlock,
+//		reflect.Complex64:     footprintSingleBlock,
+//		reflect.Complex128:    footprintSingleBlock,
+//		reflect.UnsafePointer: footprintSingleBlock,
+//		reflect.Pointer:       footprintSingleBlock,
+//		reflect.Array:         footprintSingleBlock,
+//		reflect.Chan:          footprintChanOrSlice,
+//		reflect.Slice:         footprintChanOrSlice,
+//		reflect.Map:           footprintMap,
+//		reflect.String:        footprintString,
+//		reflect.Struct:        footprintSingleBlock,
+//		reflect.Func:          footprintSingleBlock,
+//		reflect.Interface:     footprintSingleBlock,
+//	} // TODO: what to do if this changes in a future version?
+//	rawFootprint = footprintFuncs[vkind](vval, vtype)
+
+//	return BytesToSizeUnits(rawFootprint)
+//}
+
+//func footprintSingleBlock(_ reflect.Value, t reflect.Type) uintptr {
+//	return t.Size()
+//}
+
+//func footprintChanOrSlice(v reflect.Value, t reflect.Type) uintptr {
+//	return t.Size() + uintptr(v.Cap())*UNIT_SIZE
+//}
+
+//func footprintMap(v reflect.Value, t reflect.Type) uintptr {
+//	return t.Size() + uintptr(v.Len())*UNIT_SIZE
+//}
+
+//func footprintString(v reflect.Value, t reflect.Type) uintptr {
+//	return t.Size() + uintptr(v.Len())*reflect.TypeOf(rune(0)).Size()
+//}
+
+func BytesToSizeUnits(raw uintptr) (size uintptr) {
+	size = raw / UNIT_SIZE
+	if raw%UNIT_SIZE != 0 {
+		size++
+	}
+	return
+}
+
+//func SizeOfStringWithLength(len uintptr) uintptr {
+//	t := reflect.TypeOf("")
+//	return (t.Size() + len*reflect.TypeOf(rune(0)).Size()) / UNIT_SIZE
+//}
+
+func EstimateUnarySizeIncrease(op syntax.Token, x Value) uintptr {
+	if op == syntax.NOT {
+		return 1
+	}
+	return 0
+}
+
+// If the types of x and y are acceptable to operation op and are defined in the standard library, estimates the maximum size of the result, otherwise, returns zero
+func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) uintptr {
+	switch op {
+	case syntax.PLUS:
+		switch x.(type) {
+		case String:
+			if sameType(x, y) {
+				return uintptr(1 + x.(String).Len() + y.(String).Len())
+			}
+		case Int:
+			switch y.(type) {
+			case Int:
+				return intAddSizeBound(x.(Int), y.(Int))
+			case Float:
+				return 1
+			}
+		case Float:
+			switch y.(type) {
+			case Int, Float:
+				return 1
+			}
+		case *List, Tuple:
+			if sameType(x, y) {
+				return uintptr(x.(Sequence).Len() + y.(Sequence).Len())
+			}
+		}
+	case syntax.MINUS:
+		switch x.(type) {
+		case Int, Float:
+			switch y.(type) {
+			case Int, Float:
+				return intAddSizeBound(x.(Int), y.(Int))
+			}
+		}
+	case syntax.STAR:
+		if _, ok := y.(Int); ok {
+			x, y = y, x
+		}
+		if x, ok := x.(Int); ok {
+			switch y.(type) {
+			case Int:
+				return intMulSizeBound(x, y.(Int))
+			case Float:
+				switch y.(type) {
+				case Float:
+					return 1
+				}
+			case String, Bytes, *List, Tuple:
+				xi, err := AsInt32(x)
+				if err != nil || xi <= 0 {
+					return 0
+				}
+				return uintptr(1 + xi*Len(y))
+			}
+		}
+	case syntax.SLASH:
+		switch x.(type) {
+		case Int, Float:
+			switch y.(type) {
+			case Int, Float:
+				return 1
+			}
+		}
+	case syntax.SLASHSLASH:
+		if _, ok := y.(Int); ok {
+			x, y = y, x
+		}
+		switch y.(type) {
+		case Int:
+			return intDivSizeBound(x.(Int), y.(Int))
+		case Float:
+			switch x.(type) {
+			case Int, Float:
+				return 1
+			}
+		}
+	case syntax.PERCENT:
+		switch x.(type) {
+		case Int:
+			switch y.(type) {
+			case Int:
+				return intModSizeBound(x.(Int), y.(Int))
+			case Float:
+				return 1
+			}
+		case Float:
+			switch y.(type) {
+			case Int, Float:
+				return 1
+			}
+		case String:
+			return stringInterpSizeBound(x.(String), y)
+		}
+	case syntax.NOT_IN, syntax.IN:
+	case syntax.PIPE, syntax.AMP:
+		if sameType(x, y) {
+			break
+		}
+		switch x.(type) {
+		case Int:
+			return intBitwiseSizeBound(x.(Int), y.(Int))
+		case *Set:
+			if op == syntax.AMP {
+				return setJoinBound(x.(*Set), y.(*Set), true)
+			}
+			return setJoinBound(x.(*Set), y.(*Set), false)
+		}
+
+	case syntax.CIRCUMFLEX:
+		if !sameType(x, y) {
+			break
+		}
+		switch x.(type) {
+		case Int:
+			return intBitwiseSizeBound(x.(Int), y.(Int))
+		case *Set:
+			return setJoinBound(x.(*Set), y.(*Set), false)
+		}
+	case syntax.LTLT, syntax.GTGT:
+		if x, ok := x.(Int); ok {
+			y, err := AsInt32(y)
+			if err != nil {
+				return 0
+			}
+			if op == syntax.GTGT {
+				y = -y
+			}
+			neg, err := zero.CompareSameType(syntax.LT, MakeInt(y), 1)
+			if err != nil || neg {
+				return 0
+			}
+			_, big := x.get()
+			if big != nil {
+				len := uintptr(len(big.Bits())/8 + y)
+				if len <= 0 {
+					return 1
+				}
+				return len
+			}
+			if y > 0 {
+				// Small can shift into a big
+				return 2
+			}
+			return 1
+		}
+	}
+
+	// Assume users handle the size deltas for their own objects.
+	return 0
+}
+
+func intAddSizeBound(x, y Int) uintptr {
+	return 1 + intBitwiseSizeBound(x, y)
+}
+func intMulSizeBound(x, y Int) uintptr {
+	return x.Size() + y.Size()
+}
+func intDivSizeBound(x, y Int) uintptr {
+	sizeDiff := x.Size() - y.Size()
+	if sizeDiff < 0 {
+		return 1
+	}
+	return 1 + sizeDiff
+}
+func intModSizeBound(x, y Int) uintptr {
+	return y.Size()
+}
+func intBitwiseSizeBound(x, y Int) uintptr {
+	xs := x.Size()
+	ys := y.Size()
+	if xs < ys {
+		return ys
+	}
+	return xs
+}
+func stringInterpSizeBound(x String, y Value) uintptr {
+	var ytup Tuple
+	var ok bool
+	if ytup, ok = y.(Tuple); !ok {
+		ytup = Tuple{y}
+	}
+	// TODO(kcza): Make this more detailed
+	size := uintptr(x.Len())
+	for _, z := range ytup {
+		size += uintptr(len(z.String()))
+	}
+	return size
+}
+func setJoinBound(x, y *Set, conjunction bool) uintptr {
+	xs := uintptr(x.Len())
+	ys := uintptr(y.Len())
+	if xs > ys {
+		xs, ys = ys, xs
+	}
+	if conjunction {
+		return 1 + xs
+	}
+	// Disjunction
+	return 1 + ys
+}
+func writeValueSizeBound(v Value, path []Value) uintptr {
+	switch v := v.(type) {
+	case nil:
+		return uintptr(len("<nil>"))
+	case NoneType:
+		return uintptr(len("None"))
+	case Int:
+		return 1 + v.Size()
+	case Bool:
+		if v {
+			return uintptr(len("true"))
+		} else {
+			return uintptr(len("false"))
+		}
+	case String:
+		return 2 + 2*uintptr(len(v))
+	case *Function:
+		return uintptr(len("<function >") + len(v.Name()))
+	case *Builtin:
+		if v.recv != nil {
+			return uintptr(len("<built-in method  of  value>") + len(v.Name()) + len(v.recv.Type()))
+		}
+		return uintptr(len("<built-in function >") + len(v.Name()))
+	case *List:
+		size := uintptr(len("[]"))
+		if pathContains(path, v) {
+			return size + uintptr(len("..."))
+		}
+		size += uintptr(len(", ") * (v.Len() - 1))
+		for _, e := range v.elems {
+			size += writeValueSizeBound(e, append(path, v))
+		}
+		return size
+	case Tuple:
+		size := uintptr(len("()"))
+		size += uintptr(len(", ") * (v.Len() - 1))
+		for _, e := range v {
+			size += writeValueSizeBound(e, append(path, v))
+		}
+		return size
+	case *Dict:
+		size := uintptr(len("{}"))
+		if pathContains(path, v) {
+			return size + uintptr(len("..."))
+		}
+		size += uintptr(len(", ") * (v.Len() - 1))
+		size += uintptr(len(":") * v.Len())
+		for e := v.ht.head; e != nil; e = e.next {
+			key, val := e.key, e.value
+			size += writeValueSizeBound(key, append(path, v))
+			size += writeValueSizeBound(val, append(path, v))
+		}
+		return size
+	case *Set:
+		size := uintptr(len("set([])") + len(", ")*(v.Len()-1))
+		for _, e := range v.elems() {
+			size += writeValueSizeBound(e, append(path, v))
+		}
+		return size
+	default:
+		return uintptr(len(v.String())) // WARN: Accounting done after the fact.
+	}
 }
