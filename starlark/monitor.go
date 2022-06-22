@@ -464,3 +464,66 @@ func setJoinBound(x, y *Set, conjunction bool) uintptr {
 	// Disjunction
 	return 1 + ys
 }
+func writeValueSizeBound(v Value, path []Value) uintptr {
+	switch v := v.(type) {
+	case nil:
+		return uintptr(len("<nil>"))
+	case NoneType:
+		return uintptr(len("None"))
+	case Int:
+		return 1 + v.Size()
+	case Bool:
+		if v {
+			return uintptr(len("true"))
+		} else {
+			return uintptr(len("false"))
+		}
+	case String:
+		return 2 + 2*uintptr(len(v))
+	case *Function:
+		return uintptr(len("<function >") + len(v.Name()))
+	case *Builtin:
+		if v.recv != nil {
+			return uintptr(len("<built-in method  of  value>") + len(v.Name()) + len(v.recv.Type()))
+		}
+		return uintptr(len("<built-in function >") + len(v.Name()))
+	case *List:
+		size := uintptr(len("[]"))
+		if pathContains(path, v) {
+			return size + uintptr(len("..."))
+		}
+		size += uintptr(len(", ") * (v.Len() - 1))
+		for _, e := range v.elems {
+			size += writeValueSizeBound(e, append(path, v))
+		}
+		return size
+	case Tuple:
+		size := uintptr(len("()"))
+		size += uintptr(len(", ") * (v.Len() - 1))
+		for _, e := range v {
+			size += writeValueSizeBound(e, append(path, v))
+		}
+		return size
+	case *Dict:
+		size := uintptr(len("{}"))
+		if pathContains(path, v) {
+			return size + uintptr(len("..."))
+		}
+		size += uintptr(len(", ") * (v.Len() - 1))
+		size += uintptr(len(":") * v.Len())
+		for e := v.ht.head; e != nil; e = e.next {
+			key, val := e.key, e.value
+			size += writeValueSizeBound(key, append(path, v))
+			size += writeValueSizeBound(val, append(path, v))
+		}
+		return size
+	case *Set:
+		size := uintptr(len("set([])") + len(", ")*(v.Len()-1))
+		for _, e := range v.elems() {
+			size += writeValueSizeBound(e, append(path, v))
+		}
+		return size
+	default:
+		return uintptr(len(v.String())) // WARN: Accounting done after the fact.
+	}
+}
