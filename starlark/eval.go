@@ -1656,21 +1656,22 @@ func (th *Thread) CheckUsage() error {
 		return errors.New("too many steps")
 	}
 	if th.allocations >= th.maxAllocations {
-		return errors.New("too much memory")
+		return errors.New("too many allocations")
 	}
 	return nil
 }
 
 func (th *Thread) DeclareSizeIncrease(delta uintptr, whence string) error {
+	if th.cancelReason == nil {
+		atomic.AddUintptr(&th.allocations, delta)
+		if th.allocations >= th.maxAllocations {
+			th.Cancel("too many allocations")
+		}
+	}
+
 	if th.cancelReason != nil {
 		reason := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&th.cancelReason)))
 		return fmt.Errorf("Starlark computation cancelled: %s", *(*string)(reason))
-	}
-	atomic.AddUintptr(&th.allocations, delta)
-	if th.allocations >= th.maxAllocations {
-		reason := fmt.Sprintf("too much memory used: %s failed to allocate another %d locations after %d steps", whence, delta, th.steps)
-		th.Cancel(reason)
-		return errors.New(reason)
 	}
 	return nil
 }
