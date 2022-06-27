@@ -479,8 +479,9 @@ loop:
 			v := stack[sp-1]
 			sp -= 3
 			oldlen := dict.Len()
-			_, found, err := dict.Get(k)
-			if err != nil {
+			_, found, err2 := dict.Get(k)
+			if err2 != nil {
+				err = err2
 				break loop
 			}
 			if !found {
