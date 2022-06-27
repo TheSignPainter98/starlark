@@ -92,9 +92,6 @@ func (th *Thread) ExecutionSteps() uint64 {
 // thread's step counter exceeds this limit, the interpreter calls
 // thread.Cancel("too many steps").
 func (th *Thread) SetMaxExecutionSteps(max uint64) error {
-	if th.InUse() {
-		return errors.New("cannot change execution steps of a thread already in use")
-	}
 	th.maxSteps = max
 	return nil
 }
@@ -104,8 +101,8 @@ func (th *Thread) Allocations() uintptr {
 }
 
 func (th *Thread) SetMaxAllocations(max uintptr) error {
-	if th.InUse() {
-		return errors.New("cannot change memory cap of a thread already in use")
+	if max == 0 {
+		max--
 	}
 	th.maxAllocations = max
 	return nil
@@ -1238,11 +1235,7 @@ func Call(thread *Thread, fn Value, args Tuple, kwargs []Tuple) (Value, error) {
 		// one-time initialization of thread
 
 		if thread.maxAllocations == 0 {
-			if dflt := uintptr(*DefaultAllocationCap); dflt != 0 {
-				thread.maxAllocations = dflt
-			} else {
-				thread.maxAllocations-- // MaxUintptr
-			}
+			thread.SetMaxAllocations(uintptr(*DefaultAllocationCap))
 		}
 
 		if thread.maxSteps == 0 {
@@ -1658,14 +1651,14 @@ func interpolate(format string, x Value) (Value, error) {
 	return String(buf.String()), nil
 }
 
-func (th *Thread) checkUsage() {
+func (th *Thread) CheckUsage() error {
 	if th.steps >= th.maxSteps {
-		th.Cancel("too many steps")
+		return errors.New("too many steps")
 	}
-}
-
-func (th *Thread) InUse() bool {
-	return th.steps > 0
+	if th.allocations >= th.maxAllocations {
+		return errors.New("too much memory")
+	}
+	return nil
 }
 
 func (th *Thread) DeclareSizeIncrease(delta uintptr, whence string) error {
