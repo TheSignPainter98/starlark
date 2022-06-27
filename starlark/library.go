@@ -1999,20 +1999,8 @@ func string_format(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, e
 				}
 				buf.WriteString(str)
 			} else {
-				writeBufferValue(buf, th, b, arg, nil)
-				var delta uintptr
-				var canEstimate bool
-				initialLen := buf.Len()
-				if delta, canEstimate = writeValueSizeBound(arg, nil); canEstimate {
-					if err := th.DeclareSizeIncrease(delta, b.Name()); err != nil {
-						return nil, err
-					}
-				}
-				writeValue(buf, arg, nil)
-				if !canEstimate {
-					if err := th.DeclareSizeIncrease(uintptr(buf.Len()-initialLen), b.Name()); err != nil {
-						return nil, err
-					}
+				if err := writeBufferValue(buf, th, b, arg, nil); err != nil {
+					return nil, err
 				}
 			}
 		case "r":
