@@ -1842,11 +1842,16 @@ func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) (uintptr, Siz
 			}
 		}
 	case syntax.MINUS:
-		switch x.(type) {
-		case Int, Float:
-			switch y.(type) {
+		if _, ok := y.(Int); ok {
+			x, y = y, x
+		}
+		switch y.(type) {
+		case Int:
+			return intAddSizeBound(x.(Int), y.(Int)), nil
+		case Float:
+			switch x.(type) {
 			case Int, Float:
-				return intAddSizeBound(x.(Int), y.(Int)), nil
+				return 1, nil
 			}
 		}
 	case syntax.STAR:
@@ -1910,7 +1915,7 @@ func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) (uintptr, Siz
 		}
 	case syntax.NOT_IN, syntax.IN:
 	case syntax.PIPE, syntax.AMP:
-		if sameType(x, y) {
+		if !sameType(x, y) {
 			break
 		}
 		switch x.(type) {
