@@ -1211,6 +1211,23 @@ func writeValue(out *strings.Builder, x Value, path []Value) {
 	}
 }
 
+func writeBufferValue(buf *strings.Builder, thread *Thread, b *Builtin, x Value, path []Value) error {
+	delta, canEstimate := writeValueSizeBound(x, path)
+	var initialLen int
+	if !canEstimate {
+		initialLen = buf.Len()
+	} else if err := thread.DeclareSizeIncrease(delta, b.Name()); err != nil {
+		return err
+	}
+	writeValue(buf, x, path)
+	if !canEstimate {
+		if err := thread.DeclareSizeIncrease(uintptr(buf.Len()-initialLen), b.Name()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func pathContains(path []Value, x Value) bool {
 	for _, y := range path {
 		if x == y {

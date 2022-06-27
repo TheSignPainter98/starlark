@@ -171,7 +171,9 @@ loop:
 			y := stack[sp-1]
 			x := stack[sp-2]
 			sp -= 2
-			if delta := EstimateBinarySizeIncrease(binop, x, y); delta != 0 {
+			var resultSize SizeEstimator
+			var delta uintptr
+			if delta, resultSize = EstimateBinarySizeIncrease(binop, x, y); delta != 0 {
 				if err = thread.DeclareSizeIncrease(delta, "interp loop binary op"); err != nil {
 					break loop
 				}
@@ -180,6 +182,11 @@ loop:
 			if err2 != nil {
 				err = err2
 				break loop
+			}
+			if resultSize != nil {
+				if err = thread.DeclareSizeIncrease(resultSize(z), "interp loop binary op"); err != nil {
+					break loop
+				}
 			}
 			stack[sp] = z
 			sp++
@@ -192,7 +199,9 @@ loop:
 				unop = syntax.Token(op-compile.UPLUS) + syntax.PLUS
 			}
 			x := stack[sp-1]
-			if delta := EstimateUnarySizeIncrease(unop, x); delta != 0 {
+			var delta uintptr
+			var resultSize SizeEstimator
+			if delta, resultSize = EstimateUnarySizeIncrease(unop, x); delta != 0 {
 				if err = thread.DeclareSizeIncrease(delta, "interp loop unary op"); err != nil {
 					break loop
 				}
@@ -202,13 +211,21 @@ loop:
 				err = err2
 				break loop
 			}
+			if resultSize != nil {
+				if err = thread.DeclareSizeIncrease(resultSize(y), "interp loop unary op"); err != nil {
+					break loop
+				}
+			}
 			stack[sp-1] = y
 
 		case compile.INPLACE_ADD:
 			y := stack[sp-1]
 			x := stack[sp-2]
 			sp -= 2
-			if delta := EstimateBinarySizeIncrease(syntax.PLUS, x, y); delta != 0 {
+
+			var delta uintptr
+			var resultSize SizeEstimator
+			if delta, resultSize = EstimateBinarySizeIncrease(syntax.PLUS, x, y); delta != 0 {
 				if err = thread.DeclareSizeIncrease(delta, "interp loop inplace-add"); err != nil {
 					break loop
 				}
@@ -230,6 +247,12 @@ loop:
 			if z == nil {
 				z, err = Binary(syntax.PLUS, x, y)
 				if err != nil {
+					break loop
+				}
+			}
+
+			if resultSize != nil {
+				if err = thread.DeclareSizeIncrease(resultSize(z), "interp loop inplace-add"); err != nil {
 					break loop
 				}
 			}

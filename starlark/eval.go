@@ -1798,37 +1798,47 @@ func BytesToSizeUnits(raw uintptr) (size uintptr) {
 //	return (t.Size() + len*reflect.TypeOf(rune(0)).Size()) / UNIT_SIZE
 //}
 
-func EstimateUnarySizeIncrease(op syntax.Token, x Value) uintptr {
-	if op == syntax.NOT {
-		return 1
+type SizeEstimator func(v Value) uintptr
+
+type HasUnaryResultEstimator interface {
+	SizeOfUnaryResult(op syntax.Token) (uintptr, SizeEstimator)
+}
+
+type HasBinaryResultEstimator interface {
+	SizeOfBinaryResult(op syntax.Token, right Value) (uintptr, SizeEstimator)
+}
+
+func EstimateUnarySizeIncrease(op syntax.Token, x Value) (uintptr, SizeEstimator) {
+	if x, ok := x.(HasUnaryResultEstimator); ok {
+		return x.SizeOfUnaryResult(op)
 	}
-	return 0
+	return 1, nil
 }
 
 // If the types of x and y are acceptable to operation op and are defined in the standard library, estimates the maximum size of the result, otherwise, returns zero
-func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) uintptr {
+func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) (uintptr, SizeEstimator) {
 	switch op {
 	case syntax.PLUS:
 		switch x.(type) {
 		case String:
 			if sameType(x, y) {
-				return uintptr(1 + x.(String).Len() + y.(String).Len())
+				return uintptr(1 + x.(String).Len() + y.(String).Len()), nil
 			}
 		case Int:
 			switch y.(type) {
 			case Int:
-				return intAddSizeBound(x.(Int), y.(Int))
+				return intAddSizeBound(x.(Int), y.(Int)), nil
 			case Float:
-				return 1
+				return 1, nil
 			}
 		case Float:
 			switch y.(type) {
 			case Int, Float:
-				return 1
+				return 1, nil
 			}
 		case *List, Tuple:
 			if sameType(x, y) {
-				return uintptr(x.(Sequence).Len() + y.(Sequence).Len())
+				return uintptr(x.(Sequence).Len() + y.(Sequence).Len()), nil
 			}
 		}
 	case syntax.MINUS:
@@ -1836,7 +1846,7 @@ func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) uintptr {
 		case Int, Float:
 			switch y.(type) {
 			case Int, Float:
-				return intAddSizeBound(x.(Int), y.(Int))
+				return intAddSizeBound(x.(Int), y.(Int)), nil
 			}
 		}
 	case syntax.STAR:
@@ -1846,18 +1856,18 @@ func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) uintptr {
 		if x, ok := x.(Int); ok {
 			switch y.(type) {
 			case Int:
-				return intMulSizeBound(x, y.(Int))
+				return intMulSizeBound(x, y.(Int)), nil
 			case Float:
 				switch y.(type) {
 				case Float:
-					return 1
+					return 1, nil
 				}
 			case String, Bytes, *List, Tuple:
 				xi, err := AsInt32(x)
 				if err != nil || xi <= 0 {
-					return 0
+					return 0, nil
 				}
-				return uintptr(1 + xi*Len(y))
+				return uintptr(1 + xi*Len(y)), nil
 			}
 		}
 	case syntax.SLASH:
@@ -1865,7 +1875,7 @@ func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) uintptr {
 		case Int, Float:
 			switch y.(type) {
 			case Int, Float:
-				return 1
+				return 1, nil
 			}
 		}
 	case syntax.SLASHSLASH:
@@ -1874,11 +1884,11 @@ func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) uintptr {
 		}
 		switch y.(type) {
 		case Int:
-			return intDivSizeBound(x.(Int), y.(Int))
+			return intDivSizeBound(x.(Int), y.(Int)), nil
 		case Float:
 			switch x.(type) {
 			case Int, Float:
-				return 1
+				return 1, nil
 			}
 		}
 	case syntax.PERCENT:
@@ -1886,17 +1896,17 @@ func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) uintptr {
 		case Int:
 			switch y.(type) {
 			case Int:
-				return intModSizeBound(x.(Int), y.(Int))
+				return intModSizeBound(x.(Int), y.(Int)), nil
 			case Float:
-				return 1
+				return 1, nil
 			}
 		case Float:
 			switch y.(type) {
 			case Int, Float:
-				return 1
+				return 1, nil
 			}
 		case String:
-			return stringInterpSizeBound(x.(String), y)
+			return 0, func(s Value) uintptr { return 1 + uintptr(s.(String).Len()) }
 		}
 	case syntax.NOT_IN, syntax.IN:
 	case syntax.PIPE, syntax.AMP:
@@ -1905,12 +1915,12 @@ func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) uintptr {
 		}
 		switch x.(type) {
 		case Int:
-			return intBitwiseSizeBound(x.(Int), y.(Int))
+			return intBitwiseSizeBound(x.(Int), y.(Int)), nil
 		case *Set:
 			if op == syntax.AMP {
-				return setJoinBound(x.(*Set), y.(*Set), true)
+				return setJoinBound(x.(*Set), y.(*Set), true), nil
 			}
-			return setJoinBound(x.(*Set), y.(*Set), false)
+			return setJoinBound(x.(*Set), y.(*Set), false), nil
 		}
 
 	case syntax.CIRCUMFLEX:
@@ -1919,41 +1929,41 @@ func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) uintptr {
 		}
 		switch x.(type) {
 		case Int:
-			return intBitwiseSizeBound(x.(Int), y.(Int))
+			return intBitwiseSizeBound(x.(Int), y.(Int)), nil
 		case *Set:
-			return setJoinBound(x.(*Set), y.(*Set), false)
+			return setJoinBound(x.(*Set), y.(*Set), false), nil
 		}
 	case syntax.LTLT, syntax.GTGT:
 		if x, ok := x.(Int); ok {
 			y, err := AsInt32(y)
 			if err != nil {
-				return 0
+				return 0, nil
 			}
 			if op == syntax.GTGT {
 				y = -y
 			}
 			neg, err := zero.CompareSameType(syntax.LT, MakeInt(y), 1)
 			if err != nil || neg {
-				return 0
+				return 0, nil
 			}
 			_, big := x.get()
 			if big != nil {
 				len := uintptr(len(big.Bits())/8 + y)
 				if len <= 0 {
-					return 1
+					return 1, nil
 				}
-				return len
+				return len, nil
 			}
 			if y > 0 {
 				// Small can shift into a big
-				return 2
+				return 2, nil
 			}
-			return 1
+			return 1, nil
 		}
 	}
 
 	// Assume users handle the size deltas for their own objects.
-	return 0
+	return 0, nil
 }
 
 func intAddSizeBound(x, y Int) uintptr {
@@ -1980,19 +1990,6 @@ func intBitwiseSizeBound(x, y Int) uintptr {
 	}
 	return xs
 }
-func stringInterpSizeBound(x String, y Value) uintptr {
-	var ytup Tuple
-	var ok bool
-	if ytup, ok = y.(Tuple); !ok {
-		ytup = Tuple{y}
-	}
-	// TODO(kcza): Make this more detailed
-	size := uintptr(x.Len())
-	for _, z := range ytup {
-		size += uintptr(len(z.String()))
-	}
-	return size
-}
 func setJoinBound(x, y *Set, conjunction bool) uintptr {
 	xs := uintptr(x.Len())
 	ys := uintptr(y.Len())
@@ -2005,66 +2002,88 @@ func setJoinBound(x, y *Set, conjunction bool) uintptr {
 	// Disjunction
 	return 1 + ys
 }
-func writeValueSizeBound(v Value, path []Value) uintptr {
+
+// Estimate the size of calling writeValue.
+func writeValueSizeBound(v Value, path []Value) (size uintptr, ok bool) {
 	switch v := v.(type) {
 	case nil:
-		return uintptr(len("<nil>"))
+		return uintptr(len("<nil>")), true
 	case NoneType:
-		return uintptr(len("None"))
+		return uintptr(len("None")), true
 	case Int:
-		return 1 + v.Size()
+		return 1 + v.Size(), true
 	case Bool:
 		if v {
-			return uintptr(len("true"))
+			return uintptr(len("true")), true
 		} else {
-			return uintptr(len("false"))
+			return uintptr(len("false")), true
 		}
 	case String:
-		return 2 + 2*uintptr(len(v))
+		return 2 + 2*uintptr(len(v)), true
 	case *Function:
-		return uintptr(len("<function >") + len(v.Name()))
+		return uintptr(len("<function >") + len(v.Name())), true
 	case *Builtin:
 		if v.recv != nil {
-			return uintptr(len("<built-in method  of  value>") + len(v.Name()) + len(v.recv.Type()))
+			return uintptr(len("<built-in method  of  value>") + len(v.Name()) + len(v.recv.Type())), true
 		}
-		return uintptr(len("<built-in function >") + len(v.Name()))
+		return uintptr(len("<built-in function >") + len(v.Name())), true
 	case *List:
-		size := uintptr(len("[]"))
+		size += uintptr(len("[]"))
 		if pathContains(path, v) {
-			return size + uintptr(len("..."))
+			return size + uintptr(len("[...]")), true
 		}
 		size += uintptr(len(", ") * (v.Len() - 1))
 		for _, e := range v.elems {
-			size += writeValueSizeBound(e, append(path, v))
+			delta, ok := writeValueSizeBound(e, append(path, v))
+			if !ok {
+				return 0, false
+			}
+			size += delta
 		}
-		return size
+		return size, true
 	case Tuple:
-		size := uintptr(len("()"))
-		size += uintptr(len(", ") * (v.Len() - 1))
 		for _, e := range v {
-			size += writeValueSizeBound(e, append(path, v))
+			delta, ok := writeValueSizeBound(e, append(path, v))
+			if !ok {
+				return 0, false
+			}
+			size += delta
 		}
-		return size
-	case *Dict:
-		size := uintptr(len("{}"))
-		if pathContains(path, v) {
-			return size + uintptr(len("..."))
-		}
+		size += uintptr(len("()"))
 		size += uintptr(len(", ") * (v.Len() - 1))
-		size += uintptr(len(":") * v.Len())
+		return size, true
+	case *Dict:
+		if pathContains(path, v) {
+			return size + uintptr(len("{...}")), true
+		}
 		for e := v.ht.head; e != nil; e = e.next {
 			key, val := e.key, e.value
-			size += writeValueSizeBound(key, append(path, v))
-			size += writeValueSizeBound(val, append(path, v))
+			delta, ok := writeValueSizeBound(key, append(path, v))
+			if !ok {
+				return 0, false
+			}
+			size += delta
+			delta, ok = writeValueSizeBound(val, append(path, v))
+			if !ok {
+				return 0, false
+			}
+			size += delta
 		}
-		return size
+		size += uintptr(len("{}"))
+		size += uintptr(len(", ") * (v.Len() - 1))
+		size += uintptr(len(":") * v.Len())
+		return size, true
 	case *Set:
-		size := uintptr(len("set([])") + len(", ")*(v.Len()-1))
 		for _, e := range v.elems() {
-			size += writeValueSizeBound(e, append(path, v))
+			delta, ok := writeValueSizeBound(e, append(path, v))
+			if !ok {
+				return 0, false
+			}
+			size += delta
 		}
-		return size
+		size += uintptr(len("set([])") + len(", ")*(v.Len()-1))
+		return size, true
 	default:
-		return uintptr(len(v.String())) // WARN: Accounting done after the fact.
+		return 0, true
 	}
 }

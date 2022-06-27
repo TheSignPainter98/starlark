@@ -403,10 +403,9 @@ func fail(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 			}
 			buf.WriteString(s)
 		} else {
-			if err := thread.DeclareSizeIncrease(writeValueSizeBound(v, nil), b.Name()); err != nil {
+			if err := writeBufferValue(buf, thread, b, v, nil); err != nil {
 				return nil, err
 			}
-			writeValue(buf, v, nil)
 		}
 	}
 
@@ -900,10 +899,9 @@ func print(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error
 			}
 			buf.WriteString(string(b_))
 		} else {
-			if err := thread.DeclareSizeIncrease(writeValueSizeBound(v, nil), b.Name()); err != nil {
+			if err := writeBufferValue(buf, thread, b, v, nil); err != nil {
 				return nil, err
 			}
-			writeValue(buf, v, nil)
 		}
 	}
 
@@ -2001,25 +1999,31 @@ func string_format(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, e
 				}
 				buf.WriteString(str)
 			} else {
-				if err := th.DeclareSizeIncrease(writeValueSizeBound(arg, nil), b.Name()); err != nil {
-					return nil, err
+				writeBufferValue(buf, th, b, arg, nil)
+				var delta uintptr
+				var canEstimate bool
+				initialLen := buf.Len()
+				if delta, canEstimate = writeValueSizeBound(arg, nil); canEstimate {
+					if err := th.DeclareSizeIncrease(delta, b.Name()); err != nil {
+						return nil, err
+					}
 				}
 				writeValue(buf, arg, nil)
+				if !canEstimate {
+					if err := th.DeclareSizeIncrease(uintptr(buf.Len()-initialLen), b.Name()); err != nil {
+						return nil, err
+					}
+				}
 			}
 		case "r":
-			if err := th.DeclareSizeIncrease(writeValueSizeBound(arg, nil), b.Name()); err != nil {
+			if err := writeBufferValue(buf, th, b, arg, nil); err != nil {
 				return nil, err
 			}
-			writeValue(buf, arg, nil)
 		default:
 			return nil, fmt.Errorf("format: unknown conversion %q", conv)
 		}
 	}
-	str := buf.String()
-	if err := th.DeclareSizeIncrease(uintptr(len(str)), b.Name()); err != nil {
-		return nil, err
-	}
-	return String(str), nil
+	return String(buf.String()), nil
 }
 
 // decimal interprets s as a sequence of decimal digits.
