@@ -976,6 +976,35 @@ func TestExecutionSteps(t *testing.T) {
 	}
 }
 
+func TestAllocations(t *testing.T) {
+	thread := new(starlark.Thread)
+	thread.SetMaxAllocations(0)
+	countAllocs := func(n int) (uintptr, error) {
+		predeclared := starlark.StringDict{"n": starlark.MakeInt(n)}
+		allocs0 := thread.Allocations()
+		_, err := starlark.ExecFile(thread, "allocs.star", `squares = [ x for x in range(n)]`, predeclared)
+		return thread.Allocations() - allocs0, err
+	}
+
+	allocs1000, err := countAllocs(1000)
+	if err != nil {
+		t.Errorf("execution failed: %v", err)
+	}
+	allocs100000, err := countAllocs(100000)
+	if err != nil {
+		t.Errorf("execution failed: %v", err)
+	}
+	if ratio := float64(allocs100000) / float64(allocs1000); ratio < 99 || ratio > 101 {
+		t.Errorf("allocations did not increase linearly: f(1000)=%d, f(100000)=%d, ratio=%g, want ~100", allocs1000, allocs100000, ratio)
+	}
+
+	thread.SetMaxAllocations(1000)
+	_, err = countAllocs(1000)
+	if fmt.Sprint(err) != "Starlark computation cancelled: too many allocations" {
+		t.Errorf("execution returned error %q, want cancellation", err)
+	}
+}
+
 // TestDeps fails if the interpreter proper (not the REPL, etc) sprouts new external dependencies.
 // We may expand the list of permitted dependencies, but should do so deliberately, not casually.
 func TestDeps(t *testing.T) {
