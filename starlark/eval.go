@@ -2004,13 +2004,14 @@ func setJoinBound(x, y *Set, conjunction bool) uintptr {
 
 // Estimate the size of calling writeValue.
 func writeValueSizeBound(v Value, path []Value) (size uintptr, ok bool) {
-	switch v := v.(type) {
-	case nil:
+	if v == nil {
 		return uintptr(len("<nil>")), true
+	}
+	switch v := v.(type) {
 	case NoneType:
 		return uintptr(len("None")), true
 	case Int:
-		return 1 + v.Size(), true
+		return v.Size(), true
 	case Bool:
 		if v {
 			return uintptr(len("true")), true

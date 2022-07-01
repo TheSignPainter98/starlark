@@ -308,7 +308,7 @@ func dict(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 	if len(args) > 1 {
 		return nil, fmt.Errorf("dict: got %d arguments, want at most 1", len(args))
 	}
-	if err := thread.DeclareSizeIncrease(1+uintptr(args.Len()+len(kwargs)), b.Name()); err != nil {
+	if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
 		return nil, err
 	}
 	dict := new(Dict)
@@ -395,6 +395,9 @@ func fail(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 	}
 	for i, v := range args {
 		if i > 0 {
+			if err := thread.DeclareSizeIncrease(uintptr(len(sep)), b.Name()); err != nil {
+				return nil, err
+			}
 			buf.WriteString(sep)
 		}
 		if s, ok := AsString(v); ok {
@@ -625,10 +628,20 @@ func int_(thread *Thread, b_ *Builtin, args Tuple, kwargs []Tuple) (Value, error
 				return nil, fmt.Errorf("int: base must be an integer >= 2 && <= 36")
 			}
 		}
-		if err := thread.DeclareSizeIncrease(1+uintptr(len(s)), b_.Name()); err != nil {
-			// Assume number of bits is proportional to length or raw repr
+
+		var bitConversionRatio uintptr
+		if b == 10 {
+			bitConversionRatio = 4
+		} else {
+			// Fast ceil(lg(b)) for b > 1
+			for b2 := b - 1; b2 != 0; b2 >>= 1 {
+				bitConversionRatio++
+			}
+		}
+		if err := thread.DeclareSizeIncrease(1+uintptr(len(s))*bitConversionRatio, b_.Name()); err != nil {
 			return nil, err
 		}
+
 		res := parseInt(s, b)
 		if res == nil {
 			return nil, fmt.Errorf("int: invalid literal with base %d: %s", b, s)
@@ -886,6 +899,9 @@ func print(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error
 	buf := new(strings.Builder)
 	for i, v := range args {
 		if i > 0 {
+			if err := thread.DeclareSizeIncrease(uintptr(len(sep)), b.Name()); err != nil {
+				return nil, err
+			}
 			buf.WriteString(sep)
 		}
 		if s, ok := AsString(v); ok {
@@ -931,7 +947,9 @@ func range_(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 		return nil, nameErr(b, "step argument must not be zero")
 	}
 
-	// TODO(kcza): track location usage
+	if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+		return nil, err
+	}
 	return rangeValue{start: start, stop: stop, step: step, len: rangeLen(start, stop, step)}, nil
 }
 
@@ -1052,7 +1070,6 @@ func repr(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error)
 	if err := UnpackPositionalArgs("repr", args, kwargs, 1, &x); err != nil {
 		return nil, err
 	}
-	// TODO(kcza): track location usage
 	xs := x.String()
 	if err := thread.DeclareSizeIncrease(1+uintptr(len(xs)), b.Name()); err != nil {
 		return nil, err
@@ -1321,7 +1338,6 @@ func zip(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) 
 					break outer
 				}
 				if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
-					// Assume tuple contents are accounted elsewhere
 					return nil, err
 				}
 			}
@@ -1629,7 +1645,7 @@ func string_capitalize(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Valu
 		return nil, err
 	}
 	s := string(b.Receiver().(String))
-	if err := th.DeclareSizeIncrease(uintptr(2*len(s)), b.Name()); err != nil {
+	if err := th.DeclareSizeIncrease(1+uintptr(len(s)), b.Name()); err != nil {
 		return nil, err
 	}
 	res := new(strings.Builder)
@@ -1853,15 +1869,17 @@ func string_isupper(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, e
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#string·find
-func string_find(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
-	return string_find_impl(b, args, kwargs, true, false)
+func string_find(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+	return string_find_impl(thread, b, args, kwargs, true, false)
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#string·format
 func string_format(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	format := string(b.Receiver().(String))
 	var auto, manual bool // kinds of positional indexing used
-	// TODO(kcza): track location usage
+	if err := th.DeclareSizeIncrease(2+uintptr(len(format)), b.Name()); err != nil {
+		return nil, err
+	}
 	buf := new(strings.Builder)
 	index := 0
 	for {
@@ -1875,18 +1893,13 @@ func string_format(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, e
 		for {
 			j := strings.IndexByte(literal, '}')
 			if j < 0 {
-				if err := th.DeclareSizeIncrease(uintptr(len(literal)), b.Name()); err != nil {
-					return nil, err
-				}
 				buf.WriteString(literal)
 				break
 			}
 			if len(literal) == j+1 || literal[j+1] != '}' {
 				return nil, fmt.Errorf("format: single '}' in format")
 			}
-			if err := th.DeclareSizeIncrease(uintptr(j), b.Name()); err != nil {
-				return nil, err
-			}
+			th.DeclareSizeDecrease(1)
 			buf.WriteString(literal[:j+1])
 			literal = literal[j+2:]
 		}
@@ -1897,9 +1910,7 @@ func string_format(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, e
 
 		if i+1 < len(format) && format[i+1] == '{' {
 			// "{{" means a literal '{'
-			if err := th.DeclareSizeIncrease(1, b.Name()); err != nil {
-				return nil, err
-			}
+			th.DeclareSizeDecrease(1)
 			buf.WriteByte('{')
 			format = format[i+2:]
 			continue
@@ -1917,6 +1928,7 @@ func string_format(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, e
 
 		field := format[:i]
 		format = format[i+1:]
+		th.DeclareSizeDecrease(uintptr(len("{}") + len(field)))
 
 		var name string
 		if i := strings.IndexByte(field, '!'); i < 0 {
@@ -2031,8 +2043,8 @@ func decimal(s string) (x int, ok bool) {
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#string·index
-func string_index(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
-	return string_find_impl(b, args, kwargs, false, false)
+func string_index(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+	return string_find_impl(thread, b, args, kwargs, false, false)
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#string·join
@@ -2087,7 +2099,7 @@ func string_partition(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 	if sep == "" {
 		return nil, nameErr(b, "empty separator")
 	}
-	if err := th.DeclareSizeIncrease(4, b.Name()); err != nil {
+	if err := th.DeclareSizeIncrease(4+(3+uintptr(len(recv))), b.Name()); err != nil {
 		return nil, err
 	}
 	var i int
@@ -2138,24 +2150,34 @@ func string_replace(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, 
 		return nil, err
 	}
 
-	additionalLocationsEstimate := len(recv)
-	if extra := (len(new) - len(old)) * count; extra > 0 {
-		additionalLocationsEstimate += extra
+	additionalAllocationsEstimate := uintptr(len(recv))
+	if count > 0 {
+		if extra := (len(new) - len(old)) * count; extra > 0 {
+			additionalAllocationsEstimate += uintptr(extra)
+		}
 	}
-	if err := th.DeclareSizeIncrease(uintptr(additionalLocationsEstimate), b.Name()); err != nil {
+	if err := th.DeclareSizeIncrease(uintptr(additionalAllocationsEstimate), b.Name()); err != nil {
 		return nil, err
 	}
-	return String(strings.Replace(recv, old, new, count)), nil
+	str := strings.Replace(recv, old, new, count)
+	if difference := uintptr(1+len(str)) - additionalAllocationsEstimate; difference > 0 {
+		if err := th.DeclareSizeIncrease(difference, b.Name()); err != nil {
+			return nil, err
+		}
+	} else {
+		th.DeclareSizeDecrease(difference)
+	}
+	return String(str), nil
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#string·rfind
-func string_rfind(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
-	return string_find_impl(b, args, kwargs, true, true)
+func string_rfind(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+	return string_find_impl(thread, b, args, kwargs, true, true)
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#string·rindex
-func string_rindex(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
-	return string_find_impl(b, args, kwargs, false, true)
+func string_rindex(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+	return string_find_impl(thread, b, args, kwargs, false, true)
 }
 
 // https://github.com/google/starlark-go/starlark/blob/master/doc/spec.md#string·startswith
@@ -2211,7 +2233,8 @@ func string_strip(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, er
 		return nil, err
 	}
 	recv := string(b.Receiver().(String))
-	if err := th.DeclareSizeIncrease(uintptr(len(recv)), b.Name()); err != nil {
+	returnSizeEstimate := len(recv)
+	if err := th.DeclareSizeIncrease(1+uintptr(returnSizeEstimate), b.Name()); err != nil {
 		return nil, err
 	}
 	var s string
@@ -2234,6 +2257,9 @@ func string_strip(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, er
 		} else {
 			s = strings.TrimRightFunc(recv, unicode.IsSpace)
 		}
+	}
+	if len(s) < returnSizeEstimate {
+		th.DeclareSizeDecrease(uintptr(returnSizeEstimate - len(s)))
 	}
 	return String(s), nil
 }
@@ -2288,13 +2314,15 @@ func string_split(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, er
 	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0, &sep_, &maxsplit); err != nil {
 		return nil, err
 	}
-	maxLocations := 1 + len(recv)
-	if maxsplit > 0 {
-		maxLocations += 2 * maxsplit
+	maxAllocations := 1 + len(recv)
+	var splitAllocations int
+	if maxsplit >= 0 {
+		splitAllocations = 2 * maxsplit
 	} else {
-		maxLocations += len(recv)
+		splitAllocations = len(recv) / 2
 	}
-	if err := th.DeclareSizeIncrease(uintptr(maxLocations), b.Name()); err != nil {
+	maxAllocations += splitAllocations
+	if err := th.DeclareSizeIncrease(uintptr(maxAllocations), b.Name()); err != nil {
 		return nil, err
 	}
 
@@ -2337,6 +2365,10 @@ func string_split(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, er
 
 	} else {
 		return nil, fmt.Errorf("split: got %s for separator, want string", sep_.Type())
+	}
+
+	if len(res) < splitAllocations {
+		th.DeclareSizeDecrease(uintptr(splitAllocations - len(res)))
 	}
 
 	list := make([]Value, len(res))
@@ -2408,7 +2440,7 @@ func string_splitlines(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Valu
 	}
 	var lines []string
 	if s := string(b.Receiver().(String)); s != "" {
-		if err := th.DeclareSizeIncrease(2*uintptr(len(s)), b.Name()); err != nil {
+		if err := th.DeclareSizeIncrease(uintptr(len(s)), b.Name()); err != nil {
 			return nil, err
 		}
 		// TODO(adonovan): handle CRLF correctly.
@@ -2421,7 +2453,7 @@ func string_splitlines(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Valu
 			lines = lines[:len(lines)-1]
 		}
 	}
-	if err := th.DeclareSizeIncrease(1, b.Name()); err != nil {
+	if err := th.DeclareSizeIncrease(1+uintptr(len(lines)), b.Name()); err != nil {
 		return nil, err
 	}
 	list := make([]Value, len(lines))
@@ -2451,7 +2483,7 @@ func set_union(th *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error
 }
 
 // Common implementation of string_{r}{find,index}.
-func string_find_impl(b *Builtin, args Tuple, kwargs []Tuple, allowError, last bool) (Value, error) {
+func string_find_impl(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple, allowError, last bool) (Value, error) {
 	var sub string
 	var start_, end_ Value
 	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 1, &sub, &start_, &end_); err != nil {
@@ -2478,10 +2510,14 @@ func string_find_impl(b *Builtin, args Tuple, kwargs []Tuple, allowError, last b
 		if !allowError {
 			return nil, nameErr(b, "substring not found")
 		}
-		// TODO(kcza): track location usage
+		if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+			return nil, err
+		}
 		return MakeInt(-1), nil
 	}
-	// TODO(kcza): track location usage
+	if err := thread.DeclareSizeIncrease(1, b.Name()); err != nil {
+		return nil, err
+	}
 	return MakeInt(i + start), nil
 }
 
@@ -2540,7 +2576,11 @@ func updateDict(thread *Thread, dict *Dict, updates Tuple, kwargs []Tuple) error
 		return err
 	}
 	for _, pair := range kwargs {
-		// TODO(kcza): track location usage
+		if _, found, err := dict.Get(pair[0]); err != nil {
+			return err
+		} else if found {
+			thread.DeclareSizeDecrease(1)
+		}
 		if err := dict.SetKey(pair[0], pair[1]); err != nil {
 			return err // dict is frozen
 		}
