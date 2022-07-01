@@ -13,7 +13,7 @@ import (
 	"go.starlark.net/syntax"
 )
 
-// TODO(kcza): check the allocations are reasonable
+type codeGenerator func(n uint) (prog string, predecls starlark.StringDict)
 
 func TestPositiveDeltaDeclaration(t *testing.T) {
 	thread := new(starlark.Thread)
@@ -50,7 +50,7 @@ func TestDictAllocations(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
 		return "dict(**fields)", globals("fields", dummyDict(n))
 	}
-	testAllocationsIncreaseLinearly(t, "dict", gen, 25, 250, 4)
+	testAllocationsIncreaseLinearly(t, "dict", gen, 25, 250, 1)
 }
 
 func TestEnumerateAllocations(t *testing.T) {
@@ -95,7 +95,7 @@ func TestStrAllocations(t *testing.T) {
 	genStrFromList := func(n uint) (string, starlark.StringDict) {
 		return "str(l)", globals("l", dummyList(n))
 	}
-	testAllocationsAreConstant(t, "str", genStrFromStr, 1000, 100000, 2)
+	testAllocationsAreConstant(t, "str", genStrFromStr, 1000, 100000, 0)
 	testAllocationsIncreaseLinearly(t, "str", genStrFromInt, 100, 10000, float64(starlark.UNIT_SIZE*8)/math.Log2(10))
 	testAllocationsIncreaseLinearly(t, "str", genStrFromBytes, 1000, 100000, 1)
 	testAllocationsIncreaseLinearly(t, "str", genStrFromList, 1000, 100000, float64(len(`"a", `)))
@@ -106,6 +106,35 @@ func TestTupleAllocations(t *testing.T) {
 		return "tuple(l)", globals("l", dummyList(n))
 	}
 	testAllocationsIncreaseLinearly(t, "tuple", gen, 1000, 100000, 1)
+}
+
+func TestZipAllocations(t *testing.T) {
+	genZipCall := func(m uint) string {
+		entries := make([]string, 0, m)
+		for i := uint(1); i <= m; i++ {
+			entries = append(entries, fmt.Sprintf("l%d", i))
+		}
+		return fmt.Sprintf("zip(%s)", strings.Join(entries, ", "))
+	}
+	genZipGlobals := func(n, m uint) starlark.StringDict {
+		globals := make(starlark.StringDict, m)
+		for i := uint(1); i <= m; i++ {
+			globals[fmt.Sprintf("l%d", i)] = dummyList(n / m)
+		}
+		return globals
+	}
+	genPairZip := func(n uint) (string, starlark.StringDict) {
+		return genZipCall(2), genZipGlobals(n, 2)
+	}
+	genQuintZip := func(n uint) (string, starlark.StringDict) {
+		return genZipCall(5), genZipGlobals(n, 5)
+	}
+	genCollatingZip := func(n uint) (string, starlark.StringDict) {
+		return genZipCall(n), genZipGlobals(n, n)
+	}
+	testAllocationsIncreaseLinearly(t, "zip", genPairZip, 1000, 100000, 1.5) // Allocates backing array
+	testAllocationsIncreaseLinearly(t, "zip", genQuintZip, 1000, 100000, 1.2)
+	testAllocationsIncreaseAffinely(t, "zip", genCollatingZip, 10, 255, 1, 3)
 }
 
 func TestDictItemsAllocations(t *testing.T) {
@@ -146,7 +175,7 @@ func TestListExtend(t *testing.T) {
 
 func TestListInsert(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
-		return strings.Repeat("l.insert(-1, 'a')\n", int(n)), globals("l", starlark.NewList(nil))
+		return strings.Repeat("l.insert(where, what)\n", int(n)), globals("l", starlark.NewList(nil), "where", -1, "what", "a")
 	}
 	testAllocationsIncreaseLinearly(t, "list.insert", gen, 1000, 100000, 1)
 }
@@ -156,6 +185,25 @@ func TestStringCapitalize(t *testing.T) {
 		return "s.capitalize()", globals("s", dummyString(n))
 	}
 	testAllocationsIncreaseLinearly(t, "string.capitalize", gen, 1000, 100000, 1)
+}
+
+func TestStringFormat(t *testing.T) {
+	genNoFmt := func(n uint) (string, starlark.StringDict) {
+		return "s.format()", globals("s", strings.Repeat("{{}}", int(n/4)))
+	}
+	genFmtStrings := func(n uint) (string, starlark.StringDict) {
+		return "s.format(*l)", globals("s", strings.Repeat("{}", int(n/2)), "l", dummyList(n/2))
+	}
+	genFmtInts := func(n uint) (string, starlark.StringDict) {
+		ints := make([]starlark.Value, 0, n/2)
+		for i := uint(0); i < n/2; i++ {
+			ints = append(ints, starlark.MakeInt(0))
+		}
+		return "s.format(*l)", globals("s", strings.Repeat("{}", int(n/2)), "l", ints)
+	}
+	testAllocationsIncreaseLinearly(t, "string.format", genNoFmt, 1000, 100000, 0.5)
+	testAllocationsIncreaseLinearly(t, "string.format", genFmtStrings, 1000, 100000, 0.5)
+	testAllocationsIncreaseLinearly(t, "string.format", genFmtInts, 1000, 100000, 0.5)
 }
 
 func TestStringJoin(t *testing.T) {
@@ -194,15 +242,12 @@ func TestStringRemovesuffix(t *testing.T) {
 }
 
 func TestStringReplace(t *testing.T) {
-	expansionFac := 1.0
-	gen := func(n uint) (string, starlark.StringDict) {
-		return fmt.Sprintf("s.replace('aa', '%s')", strings.Repeat("b", int(expansionFac*2))), globals("s", dummyString(n))
+	for _, expansionFac := range []float64{0.5, 1, 2} {
+		gen := func(n uint) (string, starlark.StringDict) {
+			return fmt.Sprintf("s.replace('aa', '%s')", strings.Repeat("b", int(expansionFac*2))), globals("s", dummyString(n))
+		}
+		testAllocationsIncreaseLinearly(t, "string.replace", gen, 1000, 100000, expansionFac)
 	}
-	testAllocationsIncreaseLinearly(t, "string.replace", gen, 1000, 100000, expansionFac)
-	expansionFac = 2.0
-	testAllocationsIncreaseLinearly(t, "string.replace", gen, 1000, 100000, expansionFac)
-	expansionFac = 0.5
-	testAllocationsIncreaseLinearly(t, "string.replace", gen, 1000, 100000, expansionFac)
 }
 
 func TestStringStrip(t *testing.T) {
@@ -241,6 +286,15 @@ func TestStringSplit(t *testing.T) {
 			return "s.split(sep)", globals("s", generateSepString(n, sep), "sep", passSep)
 		}
 		testAllocationsIncreaseLinearly(t, "string.split", gen, 1000, 100000, 1)
+	}
+}
+
+func TestStringSplitlines(t *testing.T) {
+	for _, numLines := range []uint{0, 1, 10, 50} {
+		gen := func(n uint) (string, starlark.StringDict) {
+			return "s.splitlines()", globals("s", dummyLinesString(n, numLines))
+		}
+		testAllocationsIncreaseLinearly(t, "string.splitlines", gen, 1000, 100000, 1)
 	}
 }
 
@@ -291,20 +345,25 @@ func TestStruct(t *testing.T) {
 		globals["struct"] = starlark.NewBuiltin("struct", starlarkstruct.Make)
 		return "struct(**fields)", globals
 	}
-	testAllocationsIncreaseLinearly(t, "struct", gen, 1000, 100000, 1)
+	testAllocationsIncreaseLinearly(t, "struct", gen, 1000, 100000, 2)
 }
 
-func testAllocationsAreConstant(t *testing.T, name string, codeGen func(uint) (string, starlark.StringDict), nSmall, nLarge uint, allocs float64) {
+func testAllocationsAreConstant(t *testing.T, name string, codeGen codeGenerator, nSmall, nLarge uint, allocs float64) {
 	expectedAllocs := func(_ float64) float64 { return allocs }
 	testAllocations(t, name, codeGen, nSmall, nLarge, expectedAllocs)
 }
 
-func testAllocationsIncreaseLinearly(t *testing.T, name string, codeGen func(uint) (string, starlark.StringDict), nSmall, nLarge uint, allocsPerN float64) {
-	expectedAllocs := func(n float64) float64 { return n * allocsPerN }
+func testAllocationsIncreaseLinearly(t *testing.T, name string, codeGen codeGenerator, nSmall, nLarge uint, allocsPerN float64) {
+	testAllocationsIncreaseAffinely(t, name, codeGen, nSmall, nLarge, allocsPerN, 0)
+}
+
+func testAllocationsIncreaseAffinely(t *testing.T, name string, codeGen codeGenerator, nSmall, nLarge uint, allocsPerN float64, constMinAllocs uint) {
+	c := float64(constMinAllocs)
+	expectedAllocs := func(n float64) float64 { return n*allocsPerN + c }
 	testAllocations(t, name, codeGen, nSmall, nLarge, expectedAllocs)
 }
 
-func testAllocations(t *testing.T, name string, codeGen func(uint) (string, starlark.StringDict), nSmall, nLarge uint, expectedAllocsFunc func(float64) float64) { // expectedAllocsFunc func(uint) float64, expectedRatioFunc func(uint, uint) float64) {
+func testAllocations(t *testing.T, name string, codeGen codeGenerator, nSmall, nLarge uint, expectedAllocsFunc func(float64) float64) {
 	thread := new(starlark.Thread)
 	thread.SetMaxAllocations(0)
 	file := name + ".star"
@@ -323,7 +382,7 @@ func testAllocations(t *testing.T, name string, codeGen func(uint) (string, star
 	ratio := float64(deltaLarge) / float64(deltaSmall)
 	expectedRatio := expectedAllocsFunc(float64(nLarge)) / expectedAllocsFunc(float64(nSmall))
 	if ratio <= 0.9*expectedRatio || 1.1*expectedRatio <= ratio {
-		t.Errorf("memory allocations did not increase linearly: f(%d)=%d, f(%d)=%d, ratio=%g, want ~%.0f", nSmall, deltaSmall, nLarge, deltaLarge, ratio, expectedRatio)
+		t.Errorf("memory allocations did not increase linearly: f(%d)=%d, f(%d)=%d, ratio=%.3f, want ~%.0f", nSmall, deltaSmall, nLarge, deltaLarge, ratio, expectedRatio)
 	}
 
 	// Test allocations are roughly correct
@@ -351,7 +410,14 @@ func dummyInt(len uint) starlark.Int {
 }
 
 func dummyString(len uint) string {
-	return (strings.Repeat("a", int(len)))
+	return strings.Repeat("a", int(len))
+}
+
+func dummyLinesString(len, lines uint) string {
+	if lines == 0 {
+		return strings.Repeat("a", int(len))
+	}
+	return strings.Repeat(strings.Repeat("a", int(len/lines))+"\n", int(lines))
 }
 
 func dummyBytes(len uint) starlark.Bytes {
@@ -360,7 +426,7 @@ func dummyBytes(len uint) starlark.Bytes {
 
 func dummyList(len uint) *starlark.List {
 	elems := make([]starlark.Value, 0, len)
-	for i := uint(1); i < len; i++ {
+	for i := uint(0); i < len; i++ {
 		elems = append(elems, starlark.String("a"))
 	}
 	return starlark.NewList(elems)

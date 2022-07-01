@@ -293,10 +293,14 @@ loop:
 				sp--
 			}
 
+			var callOverhead uintptr
+
 			// named args (pairs)
 			var kvpairs []Tuple
 			if nkvpairs := int(arg & 0xff); nkvpairs > 0 {
-				if err = thread.DeclareSizeIncrease(uintptr(3*nkvpairs), "interp loop call prep"); err != nil {
+				kvOverhead := uintptr(3 * nkvpairs)
+				callOverhead += kvOverhead
+				if err = thread.DeclareSizeIncrease(kvOverhead, "interp loop call prep"); err != nil {
 					break loop
 				}
 				kvpairs = make([]Tuple, 0, nkvpairs)
@@ -318,7 +322,9 @@ loop:
 					break loop
 				}
 				items := dict.Items()
-				if err = thread.DeclareSizeIncrease(uintptr(len(items)), "interp loop call prep"); err != nil {
+				kwargOverhead := uintptr(len(items))
+				callOverhead += kwargOverhead
+				if err = thread.DeclareSizeIncrease(kwargOverhead, "interp loop call prep"); err != nil {
 					break loop
 				}
 				for _, item := range items {
@@ -337,7 +343,9 @@ loop:
 			// positional args
 			var positional Tuple
 			if npos := int(arg >> 8); npos > 0 {
-				if err = thread.DeclareSizeIncrease(1+uintptr(npos), "interp loop call prep"); err != nil {
+				posOverhead := 1 + uintptr(npos)
+				callOverhead += posOverhead
+				if err = thread.DeclareSizeIncrease(posOverhead, "interp loop call prep"); err != nil {
 					break loop
 				}
 				positional = stack[sp-npos : sp]
@@ -352,7 +360,9 @@ loop:
 			}
 			if args != nil {
 				// Add elements from *args sequence.
-				if err = thread.DeclareSizeIncrease(uintptr(IterableLen(args)), "interp loop call prep"); err != nil {
+				argSeqOverhead := uintptr(IterableLen(args))
+				callOverhead += argSeqOverhead
+				if err = thread.DeclareSizeIncrease(argSeqOverhead, "interp loop call prep"); err != nil {
 					break loop
 				}
 				iter := Iterate(args)
@@ -377,6 +387,7 @@ loop:
 			thread.endProfSpan()
 			z, err2 := Call(thread, function, positional, kvpairs)
 			thread.beginProfSpan()
+			thread.DeclareSizeDecrease(callOverhead)
 			if err2 != nil {
 				err = err2
 				break loop
