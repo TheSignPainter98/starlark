@@ -172,9 +172,9 @@ loop:
 			y := stack[sp-1]
 			x := stack[sp-2]
 			sp -= 2
-			var resultSize SizeEstimator
+			var computeResultSize SizeComputer
 			var delta uintptr
-			if delta, resultSize = EstimateBinarySizeIncrease(binop, x, y); delta != 0 {
+			if delta, computeResultSize = EstimateBinarySizeIncrease(binop, x, y); delta != 0 {
 				if err = thread.DeclareSizeIncrease(delta, "interp loop binary op"); err != nil {
 					break loop
 				}
@@ -184,8 +184,8 @@ loop:
 				err = err2
 				break loop
 			}
-			if resultSize != nil {
-				if err = thread.DeclareSizeIncrease(resultSize(z), "interp loop binary op"); err != nil {
+			if computeResultSize != nil {
+				if err = thread.DeclareSizeIncrease(computeResultSize(z), "interp loop binary op"); err != nil {
 					break loop
 				}
 			}
@@ -201,8 +201,8 @@ loop:
 			}
 			x := stack[sp-1]
 			var delta uintptr
-			var resultSize SizeEstimator
-			if delta, resultSize = EstimateUnarySizeIncrease(unop, x); delta != 0 {
+			var computeResultSize SizeComputer
+			if delta, computeResultSize = EstimateUnarySizeIncrease(unop, x); delta != 0 {
 				if err = thread.DeclareSizeIncrease(delta, "interp loop unary op"); err != nil {
 					break loop
 				}
@@ -212,8 +212,8 @@ loop:
 				err = err2
 				break loop
 			}
-			if resultSize != nil {
-				if err = thread.DeclareSizeIncrease(resultSize(y), "interp loop unary op"); err != nil {
+			if computeResultSize != nil {
+				if err = thread.DeclareSizeIncrease(computeResultSize(y), "interp loop unary op"); err != nil {
 					break loop
 				}
 			}
@@ -225,8 +225,8 @@ loop:
 			sp -= 2
 
 			var delta uintptr
-			var resultSize SizeEstimator
-			if delta, resultSize = EstimateBinarySizeIncrease(syntax.PLUS, x, y); delta != 0 {
+			var computeResultSize SizeComputer
+			if delta, computeResultSize = EstimateBinarySizeIncrease(syntax.PLUS, x, y); delta != 0 {
 				if err = thread.DeclareSizeIncrease(delta, "interp loop inplace-add"); err != nil {
 					break loop
 				}
@@ -252,8 +252,8 @@ loop:
 				}
 			}
 
-			if resultSize != nil {
-				if err = thread.DeclareSizeIncrease(resultSize(z), "interp loop inplace-add"); err != nil {
+			if computeResultSize != nil {
+				if err = thread.DeclareSizeIncrease(computeResultSize(z), "interp loop inplace-add"); err != nil {
 					break loop
 				}
 			}
