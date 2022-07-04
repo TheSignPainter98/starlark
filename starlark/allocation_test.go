@@ -96,7 +96,7 @@ func TestStrAllocations(t *testing.T) {
 		return "str(l)", globals("l", dummyList(n))
 	}
 	testAllocationsAreConstant(t, "str", genStrFromStr, 1000, 100000, 0)
-	testAllocationsIncreaseLinearly(t, "str", genStrFromInt, 100, 10000, float64(starlark.UNIT_SIZE*8)/math.Log2(10))
+	testAllocationsIncreaseLinearly(t, "str", genStrFromInt, 1000, 100000, 1/math.Log2(10))
 	testAllocationsIncreaseLinearly(t, "str", genStrFromBytes, 1000, 100000, 1)
 	testAllocationsIncreaseLinearly(t, "str", genStrFromList, 1000, 100000, float64(len(`"a", `)))
 }
@@ -347,7 +347,7 @@ func TestUnary(t *testing.T) {
 		genCustom := func(n uint) (string, starlark.StringDict) {
 			return fmt.Sprintf("%sa", op), globals("a", dummyType(dummyString(n)))
 		}
-		testAllocationsIncreaseLinearly(t, "unary", genInt, 100, 10000, 1)
+		testAllocationsIncreaseLinearly(t, "unary", genInt, 1000, 100000, 1)
 		testAllocationsIncreaseLinearly(t, "unary", genCustom, 1000, 100000, 1)
 	}
 }
@@ -362,7 +362,7 @@ func TestBinary(t *testing.T) {
 			return fmt.Sprintf("a %s b", op), globals("a", dummyType(dummyString(n/2)), "b", dummyType(dummyString(n/2)))
 		}
 
-		testAllocationsIncreaseLinearly(t, "binary", genInts, 100, 10000, 1)
+		testAllocationsIncreaseLinearly(t, "binary", genInts, 1000, 100000, 1)
 		testAllocationsIncreaseLinearly(t, "binary", genCustoms, 1000, 100000, 1)
 	}
 }
@@ -378,7 +378,7 @@ func TestInplaceBinary(t *testing.T) {
 			return fmt.Sprintf("c = a; c %s= b", op), globals("a", dummyType(dummyString(n/2)), "b", dummyType(dummyString(n/2)))
 		}
 
-		testAllocationsIncreaseLinearly(t, "inplace_binary", genInts, 100, 10000, 1)
+		testAllocationsIncreaseLinearly(t, "inplace_binary", genInts, 1000, 100000, 1)
 		testAllocationsIncreaseLinearly(t, "inplace_binary", genCustoms, 1000, 100000, 1)
 	}
 }
@@ -449,7 +449,7 @@ func memoryIncrease(thread *starlark.Thread, name, code string, predeclared star
 
 func dummyInt(len uint) starlark.Int {
 	i := starlark.MakeInt(1)
-	i = i.Lsh((len - 1) * uint(starlark.UNIT_SIZE*8))
+	i = i.Lsh(len - 1)
 	return i
 }
 

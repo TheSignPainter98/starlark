@@ -1779,9 +1779,9 @@ func (th *Thread) DeclareSizeDecrease(delta uintptr) {
 //	return t.Size() + uintptr(v.Len())*reflect.TypeOf(rune(0)).Size()
 //}
 
-func BytesToSizeUnits(raw uintptr) (size uintptr) {
-	size = raw / UNIT_SIZE
-	if raw%UNIT_SIZE != 0 {
+func BytesToSizeUnits(bytes uintptr) (size uintptr) {
+	size = bytes / UNIT_SIZE
+	if bytes%UNIT_SIZE != 0 {
 		size++
 	}
 	return
