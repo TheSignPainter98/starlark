@@ -1792,17 +1792,17 @@ func BytesToSizeUnits(raw uintptr) (size uintptr) {
 //	return (t.Size() + len*reflect.TypeOf(rune(0)).Size()) / UNIT_SIZE
 //}
 
-type SizeEstimator func(v Value) uintptr
+type SizeComputer func(v Value) uintptr
 
 type HasUnaryResultEstimator interface {
-	SizeOfUnaryResult(op syntax.Token) (uintptr, SizeEstimator)
+	SizeOfUnaryResult(op syntax.Token) (uintptr, SizeComputer)
 }
 
 type HasBinaryResultEstimator interface {
-	SizeOfBinaryResult(op syntax.Token, right Value) (uintptr, SizeEstimator)
+	SizeOfBinaryResult(op syntax.Token, right Value) (uintptr, SizeComputer)
 }
 
-func EstimateUnarySizeIncrease(op syntax.Token, x Value) (uintptr, SizeEstimator) {
+func EstimateUnarySizeIncrease(op syntax.Token, x Value) (uintptr, SizeComputer) {
 	if x, ok := x.(HasUnaryResultEstimator); ok {
 		return x.SizeOfUnaryResult(op)
 	}
@@ -1810,7 +1810,7 @@ func EstimateUnarySizeIncrease(op syntax.Token, x Value) (uintptr, SizeEstimator
 }
 
 // If the types of x and y are acceptable to operation op and are defined in the standard library, estimates the maximum size of the result, otherwise, returns zero
-func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) (uintptr, SizeEstimator) {
+func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) (uintptr, SizeComputer) {
 	switch op {
 	case syntax.PLUS:
 		switch x.(type) {
