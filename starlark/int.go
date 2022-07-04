@@ -153,8 +153,9 @@ func bigintToUint64(i *big.Int) (uint64, big.Accuracy) {
 }
 
 var (
-	minint64 = new(big.Int).SetInt64(math.MinInt64)
-	maxint64 = new(big.Int).SetInt64(math.MaxInt64)
+	minint64     = new(big.Int).SetInt64(math.MinInt64)
+	maxint64     = new(big.Int).SetInt64(math.MaxInt64)
+	bytesPerWord = reflect.TypeOf(big.Word(0)).Size()
 )
 
 func (i Int) Format(s fmt.State, ch rune) {
@@ -189,7 +190,8 @@ func (i Int) Hash() (uint32, error) {
 func (i Int) Size() uintptr {
 	_, big_ := i.get()
 	if big_ != nil {
-		return BytesToSizeUnits(uintptr(len(big_.Bits()) / 8))
+		var words []big.Word = big_.Bits()
+		return BytesToSizeUnits(uintptr(len(words)) * bytesPerWord)
 	}
 	return 1
 }
