@@ -339,6 +339,50 @@ func (x dummyType) Binary(_ syntax.Token, y starlark.Value, _ starlark.Side) (st
 	return nil, nil
 }
 
+func TestUnary(t *testing.T) {
+	for _, op := range []string{"-", "~"} {
+		genInt := func(n uint) (string, starlark.StringDict) {
+			return fmt.Sprintf("%sa", op), globals("a", dummyInt(n))
+		}
+		genCustom := func(n uint) (string, starlark.StringDict) {
+			return fmt.Sprintf("%sa", op), globals("a", dummyType(dummyString(n)))
+		}
+		testAllocationsIncreaseLinearly(t, "unary", genInt, 100, 10000, 1)
+		testAllocationsIncreaseLinearly(t, "unary", genCustom, 1000, 100000, 1)
+	}
+}
+
+func TestBinary(t *testing.T) {
+	for _, op := range []string{"+", "-", "*", "/", "%", "^"} {
+		genInts := func(n uint) (string, starlark.StringDict) {
+			return fmt.Sprintf("a %s b", op), globals("a", dummyInt(n-1), "b", dummyInt(n-1))
+		}
+
+		genCustoms := func(n uint) (string, starlark.StringDict) {
+			return fmt.Sprintf("a %s b", op), globals("a", dummyType(dummyString(n/2)), "b", dummyType(dummyString(n/2)))
+		}
+
+		testAllocationsIncreaseLinearly(t, "binary", genInts, 100, 10000, 1)
+		testAllocationsIncreaseLinearly(t, "binary", genCustoms, 1000, 100000, 1)
+	}
+}
+
+func TestInplaceBinary(t *testing.T) {
+	resolve.AllowGlobalReassign = true
+	for _, op := range []string{"+", "-", "*", "/", "%", "^"} {
+		genInts := func(n uint) (string, starlark.StringDict) {
+			return fmt.Sprintf("c = a; c %s= b", op), globals("a", dummyInt(n-1), "b", dummyInt(n-1))
+		}
+
+		genCustoms := func(n uint) (string, starlark.StringDict) {
+			return fmt.Sprintf("c = a; c %s= b", op), globals("a", dummyType(dummyString(n/2)), "b", dummyType(dummyString(n/2)))
+		}
+
+		testAllocationsIncreaseLinearly(t, "inplace_binary", genInts, 100, 10000, 1)
+		testAllocationsIncreaseLinearly(t, "inplace_binary", genCustoms, 1000, 100000, 1)
+	}
+}
+
 func TestStruct(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
 		globals := globals("fields", dummyDict(n))
