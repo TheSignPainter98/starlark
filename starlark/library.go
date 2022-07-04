@@ -630,7 +630,7 @@ func int_(thread *Thread, b_ *Builtin, args Tuple, kwargs []Tuple) (Value, error
 		}
 
 		var bitConversionRatio uintptr
-		if b == 10 {
+		if b == 10 || b == 0 {
 			bitConversionRatio = 4
 		} else {
 			// Fast ceil(lg(b)) for b > 1
