@@ -543,6 +543,18 @@ func (s String) Slice(start, end, step int) Value {
 	return String(str)
 }
 
+func (x String) SizeOfBinaryResult(op syntax.Token, y Value, _ Side) (uintptr, SizeComputer) {
+	switch op {
+	case syntax.PLUS:
+		if y, ok := y.(String); ok {
+			return 1 + uintptr(len(x)+len(y)), nil
+		}
+	case syntax.PERCENT:
+		return 0, func(r Value) uintptr { return 1 + uintptr(r.(String).Len()) }
+	}
+	return 0, nil
+}
+
 func (s String) Attr(name string) (Value, error) { return builtinAttr(s, name, stringMethods) }
 func (s String) AttrNames() []string             { return builtinAttrNames(stringMethods) }
 
@@ -900,6 +912,16 @@ func (x *List) CompareSameType(op syntax.Token, y_ Value, depth int) (bool, erro
 	return sliceCompare(op, x.elems, y.elems, depth)
 }
 
+func (x *List) SizeOfBinaryResult(op syntax.Token, y Value, _ Side) (uintptr, SizeComputer) {
+	if y, ok := y.(Sequence); ok {
+		switch op {
+		case syntax.PLUS:
+			return uintptr(x.Len() + y.Len()), nil
+		}
+	}
+	return 0, nil
+}
+
 func sliceCompare(op syntax.Token, x, y []Value, depth int) (bool, error) {
 	// Fast path: check length.
 	if len(x) != len(y) && (op == syntax.EQL || op == syntax.NEQ) {
@@ -1020,6 +1042,16 @@ func (t Tuple) Hash() (uint32, error) {
 	return x, nil
 }
 
+func (x *Tuple) SizeOfBinaryResult(op syntax.Token, y Value, _ Side) (uintptr, SizeComputer) {
+	if y, ok := y.(Sequence); ok {
+		switch op {
+		case syntax.PLUS:
+			return uintptr(x.Len() + y.Len()), nil
+		}
+	}
+	return 0, nil
+}
+
 type tupleIterator struct{ elems Tuple }
 
 func (it *tupleIterator) Next(p *Value) bool {
@@ -1103,6 +1135,20 @@ func (s *Set) Union(iter Iterator) (Value, error) {
 		}
 	}
 	return set, nil
+}
+
+func (x *Set) SizeOfBinaryResult(op syntax.Token, y Value, _ Side) (uintptr, SizeComputer) {
+	if y, ok := y.(*Set); ok {
+		switch op {
+		case syntax.AMP:
+			return setJoinBound(x, y, true), nil
+		case syntax.PIPE:
+			setJoinBound(x, y, false)
+		case syntax.CIRCUMFLEX:
+			return setJoinBound(x, y, false), nil
+		}
+	}
+	return 0, nil
 }
 
 // toString returns the string form of value v.

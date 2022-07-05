@@ -322,6 +322,9 @@ func TestSetUnion(t *testing.T) {
 
 type dummyType string
 
+var _ starlark.HasUnaryResultEstimator = dummyType("")
+var _ starlark.HasBinaryResultEstimator = dummyType("")
+
 func (d dummyType) String() string       { return string(d) }
 func (_ dummyType) Type() string         { return "dummyType" }
 func (_ dummyType) Freeze()              {}
@@ -332,11 +335,20 @@ func (d dummyType) Hash() (uint32, error) {
 func (d dummyType) Unary(op syntax.Token) (starlark.Value, error) {
 	return starlark.String(strings.ToUpper(string(d))), nil
 }
+func (d dummyType) SizeOfUnaryResult(_ syntax.Token) (uintptr, starlark.SizeComputer) {
+	return 1 + uintptr(len(d)), nil
+}
 func (x dummyType) Binary(_ syntax.Token, y starlark.Value, _ starlark.Side) (starlark.Value, error) {
 	if y, ok := y.(dummyType); ok {
 		return dummyType(string(x) + string(y)), nil // Concatenate regardless of binary op
 	}
 	return nil, nil
+}
+func (x dummyType) SizeOfBinaryResult(_ syntax.Token, y starlark.Value, _ starlark.Side) (uintptr, starlark.SizeComputer) {
+	if y, ok := y.(dummyType); ok {
+		return 1 + uintptr(len(x)+len(y)), nil
+	}
+	return 0, nil
 }
 
 func TestUnary(t *testing.T) {
@@ -347,40 +359,70 @@ func TestUnary(t *testing.T) {
 		genCustom := func(n uint) (string, starlark.StringDict) {
 			return fmt.Sprintf("%sa", op), globals("a", dummyType(dummyString(n)))
 		}
-		testAllocationsIncreaseLinearly(t, "unary", genInt, 1000, 100000, 1)
+		testAllocationsIncreaseLinearly(t, "unary", genInt, 1000, 100000, 1/float64(8*starlark.UNIT_SIZE))
 		testAllocationsIncreaseLinearly(t, "unary", genCustom, 1000, 100000, 1)
 	}
 }
 
 func TestBinary(t *testing.T) {
-	for _, op := range []string{"+", "-", "*", "/", "%", "^"} {
-		genInts := func(n uint) (string, starlark.StringDict) {
-			return fmt.Sprintf("a %s b", op), globals("a", dummyInt(n-1), "b", dummyInt(n-1))
+	genIntsWithOp := func(op string) codeGenerator {
+		return func(n uint) (string, starlark.StringDict) {
+			return fmt.Sprintf("a %s b", op), globals("a", dummyInt(n), "b", dummyInt(n/2))
 		}
+	}
 
+	opIntAllocs := map[string]float64{
+		"+":  1,
+		"-":  1,
+		"*":  1.5,
+		"/":  1,
+		"//": 0.5,
+		"%":  0.5,
+		"&":  1,
+		"|":  1,
+		"^":  1,
+	}
+
+	for _, op := range []string{"+", "-", "*", "//", "%", "&", "|", "^"} {
 		genCustoms := func(n uint) (string, starlark.StringDict) {
 			return fmt.Sprintf("a %s b", op), globals("a", dummyType(dummyString(n/2)), "b", dummyType(dummyString(n/2)))
 		}
-
-		testAllocationsIncreaseLinearly(t, "binary", genInts, 1000, 100000, 1)
+		testAllocationsIncreaseLinearly(t, "binary", genIntsWithOp(op), 10000, 100000, opIntAllocs[op]/float64(8*starlark.UNIT_SIZE))
 		testAllocationsIncreaseLinearly(t, "binary", genCustoms, 1000, 100000, 1)
 	}
+	testAllocationsAreConstant(t, "binary", genIntsWithOp("/"), 100, 1000, opIntAllocs["/"])
 }
 
 func TestInplaceBinary(t *testing.T) {
 	resolve.AllowGlobalReassign = true
-	for _, op := range []string{"+", "-", "*", "/", "%", "^"} {
-		genInts := func(n uint) (string, starlark.StringDict) {
-			return fmt.Sprintf("c = a; c %s= b", op), globals("a", dummyInt(n-1), "b", dummyInt(n-1))
-		}
 
+	genIntsWithOp := func(op string) codeGenerator {
+		return func(n uint) (string, starlark.StringDict) {
+			return fmt.Sprintf("c = a; c %s= b", op), globals("a", dummyInt(n), "b", dummyInt(n/2))
+		}
+	}
+
+	opIntAllocs := map[string]float64{
+		"+":  1,
+		"-":  1,
+		"*":  1.5,
+		"/":  1,
+		"//": 0.5,
+		"%":  0.5,
+		"&":  1,
+		"|":  1,
+		"^":  1,
+	}
+
+	for _, op := range []string{"+", "-", "*", "//", "%", "&", "|", "^"} {
 		genCustoms := func(n uint) (string, starlark.StringDict) {
 			return fmt.Sprintf("c = a; c %s= b", op), globals("a", dummyType(dummyString(n/2)), "b", dummyType(dummyString(n/2)))
 		}
 
-		testAllocationsIncreaseLinearly(t, "inplace_binary", genInts, 1000, 100000, 1)
+		testAllocationsIncreaseLinearly(t, "inplace_binary", genIntsWithOp(op), 10000, 100000, opIntAllocs[op]/float64(8*starlark.UNIT_SIZE))
 		testAllocationsIncreaseLinearly(t, "inplace_binary", genCustoms, 1000, 100000, 1)
 	}
+	testAllocationsAreConstant(t, "binary", genIntsWithOp("/"), 100, 1000, opIntAllocs["/"])
 }
 
 type dummyIterable struct{ max uint }
