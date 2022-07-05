@@ -57,7 +57,9 @@ var (
 	zero, one = makeSmallInt(0), makeSmallInt(1)
 	oneBig    = big.NewInt(1)
 
-	_ HasUnary = Int{}
+	_ HasUnary                 = Int{}
+	_ HasUnaryResultEstimator  = Int{}
+	_ HasBinaryResultEstimator = Int{}
 )
 
 // Unary implements the operations +int, -int, and ~int.
@@ -71,6 +73,102 @@ func (i Int) Unary(op syntax.Token) (Value, error) {
 		return i.Not(), nil
 	}
 	return nil, nil
+}
+
+func (i Int) SizeOfUnaryResult(_ syntax.Token) (uintptr, SizeComputer) {
+	return i.Size(), nil
+}
+
+func (x Int) SizeOfBinaryResult(op syntax.Token, y Value, _ Side) (uintptr, SizeComputer) {
+	switch op {
+	case syntax.PLUS:
+		if y, ok := y.(Int); ok {
+			return intAddSizeBound(x, y), nil
+		}
+	case syntax.MINUS:
+		if y, ok := y.(Int); ok {
+			return intAddSizeBound(x, y), nil
+		}
+	case syntax.STAR:
+		switch y := y.(type) {
+		case Int:
+			return intMulSizeBound(x, y), nil
+		case String, Bytes, *List, Tuple:
+			x, err := AsInt32(x)
+			if err != nil {
+				return 0, nil
+			}
+			return uintptr(x * Len(y)), nil
+		}
+	case syntax.SLASH:
+		if _, ok := y.(Int); ok {
+			return 1, nil
+		}
+	case syntax.SLASHSLASH:
+		if y, ok := y.(Int); ok {
+			return intDivSizeBound(x, y), nil
+		}
+	case syntax.PERCENT:
+		if y, ok := y.(Int); ok {
+			return intModSizeBound(x, y), nil
+		}
+	case syntax.PIPE, syntax.AMP:
+		if y, ok := y.(Int); ok {
+			return intBitwiseSizeBound(x, y), nil
+		}
+	case syntax.CIRCUMFLEX:
+		if y, ok := y.(Int); ok {
+			return intBitwiseSizeBound(x, y), nil
+		}
+	case syntax.LTLT, syntax.GTGT:
+		if y, err := AsInt32(y); err != nil {
+			if y < 0 {
+				return 0, nil
+			}
+			if op == syntax.GTGT {
+				y = -y
+			}
+
+			// TODO(kcza): test me!
+			xs := x.Size()
+			xsb := SizeUnitsToBytes(xs) * 8
+			shiftSize := int(xsb) + y
+			if shiftSize <= 0 {
+				return 1, nil
+			}
+			return BytesToSizeUnits(uintptr(shiftSize / 8)), nil
+		}
+	}
+
+	if _, ok := y.(Float); ok {
+		return 1, nil
+	}
+	return 0, nil
+}
+
+func intAddSizeBound(x, y Int) uintptr {
+	return 1 + intBitwiseSizeBound(x, y)
+}
+func intMulSizeBound(x, y Int) uintptr {
+	return x.Size() + y.Size()
+}
+func intDivSizeBound(x, y Int) uintptr {
+	sizeDiff := x.Size() - y.Size()
+	if sizeDiff < 0 {
+		return 1
+	}
+	return 1 + sizeDiff
+}
+func intModSizeBound(x, y Int) uintptr {
+	return y.Size()
+}
+func intBitwiseSizeBound(x, y Int) uintptr {
+	xs := x.Size()
+	ys := y.Size()
+	if xs < ys {
+		return ys
+	}
+	return xs
 }
 
 // Int64 returns the value as an int64.
