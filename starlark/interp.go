@@ -436,12 +436,7 @@ loop:
 			y := stack[sp-2]
 			x := stack[sp-3]
 			sp -= 3
-			if _, err2 := getIndex(x, y); err2 == nil {
-				if err = thread.DeclareSizeIncrease(1, "interp loop set-index"); err != nil {
-					break loop
-				}
-			}
-			err = setIndex(x, y, z)
+			err = setIndex(thread, x, y, z)
 			if err != nil {
 				break loop
 			}
