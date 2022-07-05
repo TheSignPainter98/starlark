@@ -468,6 +468,33 @@ func TestMakeList(t *testing.T) {
 	testAllocationsIncreaseLinearly(t, "makelist", gen, 1000, 100000, 1)
 }
 
+func TestSetIndex(t *testing.T) {
+	gen := func(n uint) (string, starlark.StringDict) {
+		prog := new(strings.Builder)
+		prog.Grow((len("d[] = \n") + int(2*math.Log2(float64(n)))) * int(n))
+		globals := make(starlark.StringDict, n+1)
+		globals["d"] = starlark.NewDict(int(n))
+		for i := uint(0); i < n; i++ {
+			s := fmt.Sprintf("_%d", i)
+			globals[s] = starlark.String(s)
+			prog.WriteString(fmt.Sprintf("d[%s] = %s\n", s, s))
+		}
+		return prog.String(), globals
+	}
+	testAllocationsIncreaseLinearly(t, "setindex", gen, 1000, 100000, 1)
+
+	genNonUnique := func(n uint) (string, starlark.StringDict) {
+		prog := new(strings.Builder)
+		prog.Grow(len("d[e] = e\n") * int(n))
+		for i := uint(0); i < n; i++ {
+			prog.WriteString("d[e] = e\n")
+		}
+		return prog.String(), globals("d", starlark.NewDict(1), "e", starlark.String("_e"))
+	}
+
+	testAllocationsAreConstant(t, "setindex", genNonUnique, 1000, 100000, 1)
+}
+
 func TestMakeFunc(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
 		prog := new(strings.Builder)

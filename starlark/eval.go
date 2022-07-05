@@ -692,9 +692,22 @@ func outOfRange(i, n int, x Value) error {
 }
 
 // setIndex implements x[y] = z.
-func setIndex(x, y, z Value) error {
+func setIndex(thread *Thread, x, y, z Value) error {
 	switch x := x.(type) {
 	case HasSetKey:
+		var found bool
+		if x, ok := x.(Mapping); ok {
+			var err error
+			_, found, err = x.Get(y)
+			if err != nil {
+				return err
+			}
+		}
+		if !found {
+			if err := thread.DeclareSizeIncrease(1, "setIndex"); err != nil {
+				return err
+			}
+		}
 		if err := x.SetKey(y, z); err != nil {
 			return err
 		}
