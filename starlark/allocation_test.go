@@ -383,6 +383,111 @@ func TestInplaceBinary(t *testing.T) {
 	}
 }
 
+type dummyIterable struct{ max uint }
+type dummyIterator struct{ curr, len uint }
+
+var _ starlark.Value = (*dummyIterable)(nil)
+var _ starlark.Iterable = (*dummyIterable)(nil)
+var _ starlark.Iterator = (*dummyIterator)(nil)
+
+func (d dummyIterable) String() string       { return fmt.Sprint(d.max) }
+func (_ dummyIterable) Type() string         { return "dummyType" }
+func (_ dummyIterable) Freeze()              {}
+func (_ dummyIterable) Truth() starlark.Bool { return false }
+func (d dummyIterable) Hash() (uint32, error) {
+	return 0, fmt.Errorf("%s is not a hashable type", d.Type())
+}
+
+func (d *dummyIterable) Iterate() starlark.Iterator {
+	return &dummyIterator{0, d.max}
+}
+func (it *dummyIterator) Next(p *starlark.Value) bool {
+	if it.curr < it.len {
+		*p = starlark.MakeInt(int(it.curr))
+		it.curr++
+		return true
+	}
+	return false
+}
+func (*dummyIterator) Done() {}
+
+func TestSetDict(t *testing.T) {
+	gen := func(n uint) (string, starlark.StringDict) {
+		return "{i:i for i in r}", globals("r", &dummyIterable{n})
+	}
+	testAllocationsIncreaseLinearly(t, "setdict", gen, 1000, 100000, 1)
+}
+
+func TestSetDictUniq(t *testing.T) {
+	gen := func(n uint) (string, starlark.StringDict) {
+		dictElems := new(strings.Builder)
+		es := make([]starlark.Value, n)
+		for i := uint(0); i < n; i++ {
+			dictElems.WriteString(fmt.Sprintf("es[%d]:es[%d],", i, i))
+			es[i] = starlark.String(fmt.Sprintf("_%d", i))
+		}
+		return fmt.Sprintf("{%s}", dictElems.String()), globals("es", es)
+	}
+	testAllocationsIncreaseLinearly(t, "setdictuniq", gen, 1000, 100000, 1)
+}
+
+func TestAppend(t *testing.T) {
+	gen := func(n uint) (string, starlark.StringDict) {
+		return "[i for i in r]", globals("r", &dummyIterable{n})
+	}
+	testAllocationsIncreaseLinearly(t, "append", gen, 1000, 100000, 1)
+}
+
+func TestMakeTuple(t *testing.T) {
+	gen := func(n uint) (string, starlark.StringDict) {
+		globals := make(starlark.StringDict, n)
+		listContents := new(strings.Builder)
+		listContents.Grow((len("_,") + int(math.Log2(float64(n)))) * int(n))
+		for i := uint(0); i < n; i++ {
+			s := fmt.Sprintf("_%d", i)
+			globals[s] = starlark.String(s)
+			listContents.WriteString(s + ",")
+		}
+		return fmt.Sprintf("s = (%s)", listContents.String()), globals
+	}
+	testAllocationsIncreaseLinearly(t, "maketuple", gen, 1000, 100000, 1)
+}
+
+func TestMakeList(t *testing.T) {
+	gen := func(n uint) (string, starlark.StringDict) {
+		globals := make(starlark.StringDict, n)
+		listContents := new(strings.Builder)
+		listContents.Grow((len("_,") + int(math.Log2(float64(n)))) * int(n))
+		for i := uint(0); i < n; i++ {
+			s := fmt.Sprintf("_%d", i)
+			globals[s] = starlark.String(s)
+			listContents.WriteString(s + ",")
+		}
+		return fmt.Sprintf("s = [%s]", listContents.String()), globals
+	}
+	testAllocationsIncreaseLinearly(t, "makelist", gen, 1000, 100000, 1)
+}
+
+func TestMakeFunc(t *testing.T) {
+	gen := func(n uint) (string, starlark.StringDict) {
+		prog := new(strings.Builder)
+		funcCode := "def func_%d():\n\tprint('Hello, world!')\n"
+		prog.Grow(int(n) * (len(funcCode) + int(math.Log2(float64(n)))))
+		for i := uint(0); i < n; i++ {
+			prog.WriteString(fmt.Sprintf(funcCode, i))
+		}
+		return prog.String(), nil
+	}
+	testAllocationsIncreaseLinearly(t, "makefunc", gen, 1000, 100000, 2)
+}
+
+func TestMakeDict(t *testing.T) {
+	gen := func(n uint) (string, starlark.StringDict) {
+		return strings.Repeat("s = {}\n", int(n)), nil
+	}
+	testAllocationsIncreaseLinearly(t, "makedict", gen, 1000, 100000, 1)
+}
+
 func TestStruct(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
 		globals := globals("fields", dummyDict(n))
