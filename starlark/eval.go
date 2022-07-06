@@ -1814,16 +1814,6 @@ func SizeUnitsToBytes(units uintptr) uintptr {
 
 type SizeComputer func(v Value) uintptr
 
-type HasUnaryResultEstimator interface {
-	SizeOfUnaryResult(op syntax.Token) (uintptr, SizeComputer)
-}
-
-type HasBinaryResultEstimator interface {
-	SizeOfBinaryResult(op syntax.Token, right Value, side Side) (uintptr, SizeComputer)
-}
-
-var _ HasBinaryResultEstimator = (*Set)(nil)
-
 func EstimateUnarySizeIncrease(op syntax.Token, x Value) (uintptr, SizeComputer) {
 	if x, ok := x.(HasUnaryResultEstimator); ok {
 		return x.SizeOfUnaryResult(op)

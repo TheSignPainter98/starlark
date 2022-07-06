@@ -288,6 +288,12 @@ type HasBinary interface {
 	Binary(op syntax.Token, y Value, side Side) (Value, error)
 }
 
+type HasBinaryResultEstimator interface {
+	SizeOfBinaryResult(op syntax.Token, right Value, side Side) (uintptr, SizeComputer)
+}
+
+var _ HasBinaryResultEstimator = (*Set)(nil)
+
 type Side bool
 
 const (
@@ -304,6 +310,10 @@ const (
 type HasUnary interface {
 	Value
 	Unary(op syntax.Token) (Value, error)
+}
+
+type HasUnaryResultEstimator interface {
+	SizeOfUnaryResult(op syntax.Token) (uintptr, SizeComputer)
 }
 
 // A HasAttrs value has fields or methods that may be read by a dot expression (y = x.f).
