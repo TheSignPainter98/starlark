@@ -1800,6 +1800,10 @@ func BytesToSizeUnits(bytes uintptr) (size uintptr) {
 	return
 }
 
+func SizeUnitsToBytes(units uintptr) uintptr {
+	return units * UNIT_SIZE
+}
+
 //func SizeOfStringWithLength(len uintptr) uintptr {
 //	t := reflect.TypeOf("")
 //	return (t.Size() + len*reflect.TypeOf(rune(0)).Size()) / UNIT_SIZE
