@@ -41,7 +41,7 @@ func TestPositiveDeltaDeclaration(t *testing.T) {
 
 func TestBytesAllocations(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
-		return `bytes(b)`, globals("b", dummyString(n))
+		return `bytes(b)`, globals("b", dummyString(n, 'b'))
 	}
 	testAllocationsIncreaseLinearly(t, "bytes", gen, 1000, 100000, 1)
 }
@@ -69,7 +69,7 @@ func TestListAllocations(t *testing.T) {
 
 func TestReprAllocations(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
-		return "repr(s)", globals("s", dummyString(n))
+		return "repr(s)", globals("s", dummyString(n, 's'))
 	}
 	testAllocationsIncreaseLinearly(t, "repr", gen, 1000, 100000, 1)
 }
@@ -84,13 +84,13 @@ func TestSetAllocations(t *testing.T) {
 
 func TestStrAllocations(t *testing.T) {
 	genStrFromStr := func(n uint) (string, starlark.StringDict) {
-		return "str(s)", globals("s", dummyString(n))
+		return "str(s)", globals("s", dummyString(n, 'a'))
 	}
 	genStrFromInt := func(n uint) (string, starlark.StringDict) {
 		return "str(i)", starlark.StringDict{"i": dummyInt(n)}
 	}
 	genStrFromBytes := func(n uint) (string, starlark.StringDict) {
-		return "str(b)", globals("b", dummyBytes(n))
+		return "str(b)", globals("b", dummyBytes(n, 'a'))
 	}
 	genStrFromList := func(n uint) (string, starlark.StringDict) {
 		return "str(l)", globals("l", dummyList(n))
@@ -182,7 +182,7 @@ func TestListInsert(t *testing.T) {
 
 func TestStringCapitalize(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
-		return "s.capitalize()", globals("s", dummyString(n))
+		return "s.capitalize()", globals("s", dummyString(n, 's'))
 	}
 	testAllocationsIncreaseLinearly(t, "string.capitalize", gen, 1000, 100000, 1)
 }
@@ -215,28 +215,28 @@ func TestStringJoin(t *testing.T) {
 
 func TestStringLower(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
-		return "s.lower()", globals("s", dummyString(n))
+		return "s.lower()", globals("s", dummyString(n, 's'))
 	}
 	testAllocationsIncreaseLinearly(t, "string.lower", gen, 1000, 100000, 1)
 }
 
 func TestStringPartition(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
-		return "s.partition('|')", globals("s", dummyString(n/2)+"|"+dummyString(n/2-1))
+		return "s.partition('|')", globals("s", dummyString(n/2, 's')+"|"+dummyString(n/2-1, 's'))
 	}
 	testAllocationsIncreaseLinearly(t, "string.partition", gen, 1000, 100000, 1)
 }
 
 func TestStringRemoveprefix(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
-		return "s.removeprefix(pre)", globals("s", dummyString(n), "pre", dummyString(n/2))
+		return "s.removeprefix(pre)", globals("s", dummyString(n, 's'), "pre", dummyString(n/2, 's'))
 	}
 	testAllocationsIncreaseLinearly(t, "string.removeprefix", gen, 1000, 100000, 1)
 }
 
 func TestStringRemovesuffix(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
-		return "s.removesuffix(suf)", globals("s", dummyString(n), "suf", dummyString(n/2))
+		return "s.removesuffix(suf)", globals("s", dummyString(n, 's'), "suf", dummyString(n/2, 's'))
 	}
 	testAllocationsIncreaseLinearly(t, "string.removeprefix", gen, 1000, 100000, 1)
 }
@@ -244,7 +244,7 @@ func TestStringRemovesuffix(t *testing.T) {
 func TestStringReplace(t *testing.T) {
 	for _, expansionFac := range []float64{0.5, 1, 2} {
 		gen := func(n uint) (string, starlark.StringDict) {
-			return fmt.Sprintf("s.replace('aa', '%s')", strings.Repeat("b", int(expansionFac*2))), globals("s", dummyString(n))
+			return fmt.Sprintf("s.replace('aa', '%s')", strings.Repeat("b", int(expansionFac*2))), globals("s", dummyString(n, 'a'))
 		}
 		testAllocationsIncreaseLinearly(t, "string.replace", gen, 1000, 100000, expansionFac)
 	}
@@ -255,7 +255,7 @@ func TestStringStrip(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
 		s := new(strings.Builder)
 		s.WriteString(strings.Repeat(" ", int(float64(n)*whitespaceProportion*0.5)))
-		s.WriteString(string(dummyString(uint(float64(n) * (1 - whitespaceProportion)))))
+		s.WriteString(string(dummyString(uint(float64(n)*(1-whitespaceProportion)), 'a')))
 		s.WriteString(strings.Repeat(" ", int(float64(n)*whitespaceProportion*0.5)))
 		return "s.strip()", globals("s", s.String())
 	}
@@ -264,14 +264,14 @@ func TestStringStrip(t *testing.T) {
 
 func TestStringTitle(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
-		return "s.title()", globals("s", dummyString(n))
+		return "s.title()", globals("s", dummyString(n, 's'))
 	}
 	testAllocationsIncreaseLinearly(t, "string.title", gen, 1000, 100000, 1)
 }
 
 func TestStringUpper(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
-		return "s.upper()", globals("s", dummyString(n))
+		return "s.upper()", globals("s", dummyString(n, 's'))
 	}
 	testAllocationsIncreaseLinearly(t, "string.title", gen, 1000, 100000, 1)
 }
@@ -292,7 +292,7 @@ func TestStringSplit(t *testing.T) {
 func TestStringSplitlines(t *testing.T) {
 	for _, numLines := range []uint{0, 1, 10, 50} {
 		gen := func(n uint) (string, starlark.StringDict) {
-			return "s.splitlines()", globals("s", dummyLinesString(n, numLines))
+			return "s.splitlines()", globals("s", dummyLinesString(n, numLines, 'a'))
 		}
 		testAllocationsIncreaseLinearly(t, "string.splitlines", gen, 1000, 100000, 1)
 	}
@@ -307,7 +307,7 @@ func generateSepString(len uint, sep string) string {
 			if i > 0 {
 				b.WriteString(sep)
 			}
-			b.WriteString(dummyString(len / CHUNKS))
+			b.WriteString(dummyString(len/CHUNKS, 'a'))
 		}
 	}
 	return b.String()
@@ -357,7 +357,7 @@ func TestUnary(t *testing.T) {
 			return fmt.Sprintf("%sa", op), globals("a", dummyInt(n))
 		}
 		genCustom := func(n uint) (string, starlark.StringDict) {
-			return fmt.Sprintf("%sa", op), globals("a", dummyType(dummyString(n)))
+			return fmt.Sprintf("%sa", op), globals("a", dummyType(dummyString(n, 'a')))
 		}
 		testAllocationsIncreaseLinearly(t, "unary", genInt, 1000, 100000, 1/float64(8*starlark.UNIT_SIZE))
 		testAllocationsIncreaseLinearly(t, "unary", genCustom, 1000, 100000, 1)
@@ -385,7 +385,7 @@ func TestBinary(t *testing.T) {
 
 	for _, op := range []string{"+", "-", "*", "//", "%", "&", "|", "^"} {
 		genCustoms := func(n uint) (string, starlark.StringDict) {
-			return fmt.Sprintf("a %s b", op), globals("a", dummyType(dummyString(n/2)), "b", dummyType(dummyString(n/2)))
+			return fmt.Sprintf("a %s b", op), globals("a", dummyType(dummyString(n/2, 'a')), "b", dummyType(dummyString(n/2, 'b')))
 		}
 		testAllocationsIncreaseLinearly(t, "binary", genIntsWithOp(op), 10000, 100000, opIntAllocs[op]/float64(8*starlark.UNIT_SIZE))
 		testAllocationsIncreaseLinearly(t, "binary", genCustoms, 1000, 100000, 1)
@@ -416,7 +416,7 @@ func TestInplaceBinary(t *testing.T) {
 
 	for _, op := range []string{"+", "-", "*", "//", "%", "&", "|", "^"} {
 		genCustoms := func(n uint) (string, starlark.StringDict) {
-			return fmt.Sprintf("c = a; c %s= b", op), globals("a", dummyType(dummyString(n/2)), "b", dummyType(dummyString(n/2)))
+			return fmt.Sprintf("c = a; c %s= b", op), globals("a", dummyType(dummyString(n/2, 'a')), "b", dummyType(dummyString(n/2, 'b')))
 		}
 
 		testAllocationsIncreaseLinearly(t, "inplace_binary", genIntsWithOp(op), 10000, 100000, opIntAllocs[op]/float64(8*starlark.UNIT_SIZE))
@@ -638,19 +638,19 @@ func dummyInt(len uint) starlark.Int {
 	return i
 }
 
-func dummyString(len uint) string {
-	return strings.Repeat("a", int(len))
+func dummyString(len uint, char rune) string {
+	return strings.Repeat(string(char), int(len))
 }
 
-func dummyLinesString(len, lines uint) string {
+func dummyLinesString(len, lines uint, char rune) string {
 	if lines == 0 {
-		return strings.Repeat("a", int(len))
+		return strings.Repeat(string(char), int(len))
 	}
 	return strings.Repeat(strings.Repeat("a", int(len/lines))+"\n", int(lines))
 }
 
-func dummyBytes(len uint) starlark.Bytes {
-	return starlark.Bytes(strings.Repeat("a", int(len)))
+func dummyBytes(len uint, char rune) starlark.Bytes {
+	return starlark.Bytes(strings.Repeat(string(char), int(len)))
 }
 
 func dummyList(len uint) *starlark.List {
