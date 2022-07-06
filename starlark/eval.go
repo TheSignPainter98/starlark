@@ -12,6 +12,7 @@ import (
 	"io/ioutil"
 	"log"
 	"math/big"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -1678,6 +1679,9 @@ func (thread *Thread) DeclareSizeIncrease(delta uintptr, whence string) error {
 	if thread.cancelReason == nil {
 		atomic.AddUintptr(&thread.allocations, delta)
 		if thread.allocations >= thread.maxAllocations {
+			if vmdebug {
+				fmt.Fprintf(os.Stderr, "too much memory used: %s failed to allocate another %d locations (quota: %d/%d) after %d steps", whence, delta, thread.allocations-delta, thread.maxAllocations, thread.steps)
+			}
 			thread.Cancel("too many allocations")
 		}
 	}
@@ -1693,7 +1697,6 @@ func (thread *Thread) DeclareSizeDecrease(delta uintptr) {
 	if thread.cancelReason != nil {
 		return
 	}
-	// fmt.Printf("Freeing %d...\n", delta)
 	atomic.AddUintptr(&thread.allocations, -delta)
 }
 

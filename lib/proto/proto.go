@@ -221,7 +221,6 @@ func has(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwa
 		return nil, fmt.Errorf("%s: for field argument, got %s, want string or proto.FieldDescriptor", fn.Name(), field.Type())
 	}
 
-	// TODO(kcza): track location usage
 	return starlark.Bool(msg.msg.Has(fdesc)), nil
 }
 

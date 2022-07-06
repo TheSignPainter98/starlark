@@ -165,7 +165,6 @@ func (d *Duration) Unpack(v starlark.Value) error {
 			return err
 		}
 
-		// TODO(kcza): track location usage
 		*d = Duration(dur)
 		return nil
 	}
@@ -415,7 +414,6 @@ func (t Time) AttrNames() []string {
 // CompareSameType implements comparison of two Time values. required by
 // starlark.Comparable interface.
 func (t Time) CompareSameType(op syntax.Token, yV starlark.Value, depth int) (bool, error) {
-	// TODO(kcza): track location usage
 	x := time.Time(t)
 	y := time.Time(yV.(Time))
 	cmp := 0
