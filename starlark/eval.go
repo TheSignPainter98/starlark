@@ -83,28 +83,28 @@ type Thread struct {
 // computing the difference in its value before and after a computation.
 //
 // The precise meaning of "step" is not specified and may change.
-func (th *Thread) ExecutionSteps() uint64 {
-	return th.steps
+func (thread *Thread) ExecutionSteps() uint64 {
+	return thread.steps
 }
 
 // SetMaxExecutionSteps sets a limit on the number of Starlark
 // computation steps that may be executed by this thread. If the
 // thread's step counter exceeds this limit, the interpreter calls
 // thread.Cancel("too many steps").
-func (th *Thread) SetMaxExecutionSteps(max uint64) error {
-	th.maxSteps = max
+func (thread *Thread) SetMaxExecutionSteps(max uint64) error {
+	thread.maxSteps = max
 	return nil
 }
 
-func (th *Thread) Allocations() uintptr {
-	return th.allocations
+func (thread *Thread) Allocations() uintptr {
+	return thread.allocations
 }
 
-func (th *Thread) SetMaxAllocations(max uintptr) error {
+func (thread *Thread) SetMaxAllocations(max uintptr) error {
 	if max == 0 {
 		max--
 	}
-	th.maxAllocations = max
+	thread.maxAllocations = max
 	return nil
 }
 
@@ -1664,37 +1664,37 @@ func interpolate(format string, x Value) (Value, error) {
 	return String(buf.String()), nil
 }
 
-func (th *Thread) CheckUsage() error {
-	if th.steps >= th.maxSteps {
+func (thread *Thread) CheckUsage() error {
+	if thread.steps >= thread.maxSteps {
 		return errors.New("too many steps")
 	}
-	if th.allocations >= th.maxAllocations {
+	if thread.allocations >= thread.maxAllocations {
 		return errors.New("too many allocations")
 	}
 	return nil
 }
 
-func (th *Thread) DeclareSizeIncrease(delta uintptr, whence string) error {
-	if th.cancelReason == nil {
-		atomic.AddUintptr(&th.allocations, delta)
-		if th.allocations >= th.maxAllocations {
-			th.Cancel("too many allocations")
+func (thread *Thread) DeclareSizeIncrease(delta uintptr, whence string) error {
+	if thread.cancelReason == nil {
+		atomic.AddUintptr(&thread.allocations, delta)
+		if thread.allocations >= thread.maxAllocations {
+			thread.Cancel("too many allocations")
 		}
 	}
 
-	if th.cancelReason != nil {
-		reason := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&th.cancelReason)))
+	if thread.cancelReason != nil {
+		reason := atomic.LoadPointer((*unsafe.Pointer)(unsafe.Pointer(&thread.cancelReason)))
 		return fmt.Errorf("Starlark computation cancelled: %s", *(*string)(reason))
 	}
 	return nil
 }
 
-func (th *Thread) DeclareSizeDecrease(delta uintptr) {
-	if th.cancelReason != nil {
+func (thread *Thread) DeclareSizeDecrease(delta uintptr) {
+	if thread.cancelReason != nil {
 		return
 	}
 	// fmt.Printf("Freeing %d...\n", delta)
-	atomic.AddUintptr(&th.allocations, -delta)
+	atomic.AddUintptr(&thread.allocations, -delta)
 }
 
 //func SizeOf(obj interface{}) (size uintptr) {
