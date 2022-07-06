@@ -568,7 +568,7 @@ func TestStruct(t *testing.T) {
 
 func testAllocationsAreConstant(t *testing.T, name string, codeGen codeGenerator, nSmall, nLarge uint, allocs float64) {
 	expectedAllocs := func(_ float64) float64 { return allocs }
-	testAllocations(t, name, codeGen, nSmall, nLarge, expectedAllocs)
+	testAllocations(t, name, codeGen, nSmall, nLarge, expectedAllocs, "remain constant")
 }
 
 func testAllocationsIncreaseLinearly(t *testing.T, name string, codeGen codeGenerator, nSmall, nLarge uint, allocsPerN float64) {
@@ -578,10 +578,10 @@ func testAllocationsIncreaseLinearly(t *testing.T, name string, codeGen codeGene
 func testAllocationsIncreaseAffinely(t *testing.T, name string, codeGen codeGenerator, nSmall, nLarge uint, allocsPerN float64, constMinAllocs uint) {
 	c := float64(constMinAllocs)
 	expectedAllocs := func(n float64) float64 { return n*allocsPerN + c }
-	testAllocations(t, name, codeGen, nSmall, nLarge, expectedAllocs)
+	testAllocations(t, name, codeGen, nSmall, nLarge, expectedAllocs, "increase linearly")
 }
 
-func testAllocations(t *testing.T, name string, codeGen codeGenerator, nSmall, nLarge uint, expectedAllocsFunc func(float64) float64) {
+func testAllocations(t *testing.T, name string, codeGen codeGenerator, nSmall, nLarge uint, expectedAllocsFunc func(float64) float64, trendName string) {
 	thread := new(starlark.Thread)
 	thread.SetMaxAllocations(0)
 	file := name + ".star"
@@ -600,7 +600,7 @@ func testAllocations(t *testing.T, name string, codeGen codeGenerator, nSmall, n
 	ratio := float64(deltaLarge) / float64(deltaSmall)
 	expectedRatio := expectedAllocsFunc(float64(nLarge)) / expectedAllocsFunc(float64(nSmall))
 	if ratio <= 0.9*expectedRatio || 1.1*expectedRatio <= ratio {
-		t.Errorf("memory allocations did not increase linearly: f(%d)=%d, f(%d)=%d, ratio=%.3f, want ~%.0f", nSmall, deltaSmall, nLarge, deltaLarge, ratio, expectedRatio)
+		t.Errorf("memory allocations did not %s: f(%d)=%d, f(%d)=%d, ratio=%.3f, want ~%.0f", trendName, nSmall, deltaSmall, nLarge, deltaLarge, ratio, expectedRatio)
 	}
 
 	// Test allocations are roughly correct
