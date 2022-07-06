@@ -480,6 +480,17 @@ func TestAppend(t *testing.T) {
 	testAllocationsIncreaseLinearly(t, "append", gen, 1000, 100000, 1)
 }
 
+func TestSlice(t *testing.T) {
+	gen := func(n uint) (string, starlark.StringDict) {
+		l := make([]starlark.Value, n)
+		for i := uint(0); i < n; i++ {
+			l[i] = starlark.String(fmt.Sprintf("_%d", i))
+		}
+		return strings.Repeat("l[lo:hi:step]\n", int(n)), globals("l", l, "lo", 0, "hi", n, "step", n)
+	}
+	testAllocationsIncreaseLinearly(t, "slice", gen, 1000, 100000, 1)
+}
+
 func TestMakeTuple(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
 		globals := make(starlark.StringDict, n)
@@ -688,6 +699,8 @@ func globals(gs ...interface{}) starlark.StringDict {
 				continue
 			}
 			globals[key] = starlark.String(*val)
+		case uint:
+			globals[key] = starlark.MakeInt(int(val))
 		case int:
 			globals[key] = starlark.MakeInt(val)
 		case float64:
