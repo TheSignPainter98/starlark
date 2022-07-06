@@ -172,24 +172,16 @@ loop:
 			y := stack[sp-1]
 			x := stack[sp-2]
 			sp -= 2
-			var computeResultSize SizeComputer
-			var delta uintptr
-			if delta, computeResultSize = EstimateBinarySizeIncrease(binop, x, y); delta != 0 {
-				if err = thread.DeclareSizeIncrease(delta, "interp loop binary op"); err != nil {
-					break loop
-				}
+			delta, computeResultSize := EstimateBinarySizeIncrease(binop, x, y)
+			binOp := func() (interface{}, error) {
+				return Binary(binop, x, y)
 			}
-			z, err2 := Binary(binop, x, y)
+			z, err2 := accountAllocsForOperation(thread, "interp loop binary op", binOp, delta, computeResultSize)
 			if err2 != nil {
 				err = err2
 				break loop
 			}
-			if computeResultSize != nil {
-				if err = thread.DeclareSizeIncrease(computeResultSize(z), "interp loop binary op"); err != nil {
-					break loop
-				}
-			}
-			stack[sp] = z
+			stack[sp] = z.(Value)
 			sp++
 
 		case compile.UPLUS, compile.UMINUS, compile.TILDE:
@@ -200,65 +192,51 @@ loop:
 				unop = syntax.Token(op-compile.UPLUS) + syntax.PLUS
 			}
 			x := stack[sp-1]
-			var delta uintptr
-			var computeResultSize SizeComputer
-			if delta, computeResultSize = EstimateUnarySizeIncrease(unop, x); delta != 0 {
-				if err = thread.DeclareSizeIncrease(delta, "interp loop unary op"); err != nil {
-					break loop
-				}
+			delta, computeResultSize := EstimateUnarySizeIncrease(unop, x)
+			unOp := func() (interface{}, error) {
+				return Unary(unop, x)
 			}
-			y, err2 := Unary(unop, x)
+			y, err2 := accountAllocsForOperation(thread, "interp loop unary op", unOp, delta, computeResultSize)
 			if err2 != nil {
 				err = err2
 				break loop
 			}
-			if computeResultSize != nil {
-				if err = thread.DeclareSizeIncrease(computeResultSize(y), "interp loop unary op"); err != nil {
-					break loop
-				}
-			}
-			stack[sp-1] = y
+			stack[sp-1] = y.(Value)
 
 		case compile.INPLACE_ADD:
 			y := stack[sp-1]
 			x := stack[sp-2]
 			sp -= 2
 
-			var delta uintptr
-			var computeResultSize SizeComputer
-			if delta, computeResultSize = EstimateBinarySizeIncrease(syntax.PLUS, x, y); delta != 0 {
-				if err = thread.DeclareSizeIncrease(delta, "interp loop inplace-add"); err != nil {
-					break loop
-				}
-			}
-
-			// It's possible that y is not Iterable but
-			// nonetheless defines x+y, in which case we
-			// should fall back to the general case.
-			var z Value
-			if xlist, ok := x.(*List); ok {
-				if yiter, ok := y.(Iterable); ok {
-					if err = xlist.checkMutable("apply += to"); err != nil {
-						break loop
+			delta, resultSizeComputer := EstimateBinarySizeIncrease(syntax.PLUS, x, y)
+			binOp := func() (z interface{}, err error) {
+				// It's possible that y is not Iterable but
+				// nonetheless defines x+y, in which case we
+				// should fall back to the general case.
+				if xlist, ok := x.(*List); ok {
+					if yiter, ok := y.(Iterable); ok {
+						if err = xlist.checkMutable("apply += to"); err != nil {
+							return
+						}
+						listExtend(xlist, yiter)
+						z = xlist
 					}
-					listExtend(xlist, yiter)
-					z = xlist
 				}
+				if z == nil {
+					z, err = Binary(syntax.PLUS, x, y)
+					if err != nil {
+						return
+					}
+				}
+				return
 			}
-			if z == nil {
-				z, err = Binary(syntax.PLUS, x, y)
-				if err != nil {
-					break loop
-				}
-			}
-
-			if computeResultSize != nil {
-				if err = thread.DeclareSizeIncrease(computeResultSize(z), "interp loop inplace-add"); err != nil {
-					break loop
-				}
+			z, err2 := accountAllocsForOperation(thread, "interp loop inplace-add", binOp, delta, resultSizeComputer)
+			if err2 != nil {
+				err = err2
+				break loop
 			}
 
-			stack[sp] = z
+			stack[sp] = z.(Value)
 			sp++
 
 		case compile.NONE:
@@ -724,6 +702,31 @@ loop:
 	fr.locals = nil
 
 	return result, err
+}
+
+func accountAllocsForOperation(thread *Thread, opName string, op func() (interface{}, error), delta uintptr, computeResultSize SizeComputer) (result interface{}, err error) {
+	if delta != 0 {
+		if err = thread.DeclareSizeIncrease(delta, opName); err != nil {
+			return
+		}
+	}
+	result, err = op()
+	if err != nil {
+		if delta != 0 {
+			thread.DeclareSizeDecrease(delta)
+		}
+		return nil, err
+	}
+	if computeResultSize != nil {
+		if delta != 0 {
+			thread.DeclareSizeDecrease(delta)
+		}
+		if err = thread.DeclareSizeIncrease(computeResultSize(result), opName); err != nil {
+			result = nil
+			return
+		}
+	}
+	return
 }
 
 type wrappedError struct {
