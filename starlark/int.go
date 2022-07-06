@@ -129,12 +129,13 @@ func (x Int) SizeOfBinaryResult(op syntax.Token, y Value, _ Side) (uintptr, Size
 				y = -y
 			}
 
-			// TODO(kcza): test me!
 			xs := x.Size()
 			xsb := SizeUnitsToBytes(xs) * 8
 			shiftSize := int(xsb) + y
 			if shiftSize <= 0 {
 				return 1, nil
+			} else if shiftSize%8 == 0 {
+				shiftSize++
 			}
 			return BytesToSizeUnits(uintptr(shiftSize / 8)), nil
 		}
