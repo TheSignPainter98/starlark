@@ -577,6 +577,44 @@ func TestStruct(t *testing.T) {
 	testAllocationsIncreaseLinearly(t, "struct", gen, 1000, 100000, 2)
 }
 
+func TestLibJsonEncode(t *testing.T) {
+	gen := func(n uint) (string, starlark.StringDict) {
+		list := make([]starlark.Value, 0, n)
+		for i := uint(0); i < n; i++ {
+			list = append(list, starlark.String("a"))
+		}
+		globals := globals("json", json.Module, "l", list)
+		return "json.encode(l)", globals
+	}
+	testAllocationsIncreaseLinearly(t, "json.encode", gen, 1000, 100000, float64(len(`"a",`)))
+}
+
+func TestLibJsonIndent(t *testing.T) {
+	gen := func(n uint) (string, starlark.StringDict) {
+		list := new(strings.Builder)
+		list.WriteString(`["a"`)
+		for i := uint(0); i < n-1; i++ {
+			list.WriteString(`,"a"`)
+		}
+		list.WriteRune(']')
+		return "json.indent(s)", globals("json", json.Module, "s", list.String())
+	}
+	testAllocationsIncreaseLinearly(t, "json.indent", gen, 1000, 100000, float64(len("	\"a\",\n")))
+}
+
+func TestLibJsonDecode(t *testing.T) {
+	gen := func(n uint) (string, starlark.StringDict) {
+		list := new(strings.Builder)
+		list.WriteString(`["a"`)
+		for i := uint(0); i < n; i++ {
+			list.WriteString(`,"a"`)
+		}
+		list.WriteRune(']')
+		return "json.decode(l)", globals("json", json.Module, "l", list.String())
+	}
+	testAllocationsIncreaseLinearly(t, "json.decode", gen, 1000, 100000, 3)
+}
+
 func testAllocationsAreConstant(t *testing.T, name string, codeGen codeGenerator, nSmall, nLarge uint, allocs float64) {
 	expectedAllocs := func(_ float64) float64 { return allocs }
 	testAllocations(t, name, codeGen, nSmall, nLarge, expectedAllocs, "remain constant")

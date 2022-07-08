@@ -91,7 +91,7 @@ func encode(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	quote := func(s string) (err error) {
 		// Non-trivial escaping is handled by Go's encoding/json.
 		if isPrintableASCII(s) {
-			if err = thread.DeclareSizeIncrease(2*uintptr(len(s)), b.Name()); err != nil {
+			if err = thread.DeclareSizeIncrease(2+uintptr(len(s)), b.Name()); err != nil {
 				return
 			}
 			buf.Write(strconv.AppendQuote(quoteSpace[:0], s))
@@ -322,7 +322,6 @@ func decode(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tu
 	if err := starlark.UnpackPositionalArgs(builtin.Name(), args, kwargs, 1, &s); err != nil {
 		return nil, err
 	}
-	// TODO(kcza): track location usage
 
 	// The decoder necessarily makes certain representation choices
 	// such as list vs tuple, struct vs dict, int vs float.
@@ -396,7 +395,7 @@ func decode(thread *starlark.Thread, builtin *starlark.Builtin, args starlark.Tu
 
 			// unquote
 			if safe {
-				if err := thread.DeclareSizeIncrease(uintptr(len(r)-2), builtin.Name()); err != nil {
+				if err := thread.DeclareSizeIncrease(uintptr(1+len(r)-2), builtin.Name()); err != nil {
 					fail("%s", err)
 				}
 				r = r[1 : len(r)-1]
