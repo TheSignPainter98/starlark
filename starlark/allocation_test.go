@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"go.starlark.net/resolve"
-	"go.starlark.net/starlark"
-	"go.starlark.net/starlarkstruct"
-	"go.starlark.net/syntax"
+	"github.com/canonical/starlark/resolve"
+	"github.com/canonical/starlark/starlark"
+	"github.com/canonical/starlark/starlarkstruct"
+	"github.com/canonical/starlark/syntax"
 )
 
 type codeGenerator func(n uint) (prog string, predecls starlark.StringDict)
