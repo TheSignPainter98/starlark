@@ -1812,7 +1812,7 @@ func SizeUnitsToBytes(units uintptr) uintptr {
 //	return (t.Size() + len*reflect.TypeOf(rune(0)).Size()) / UNIT_SIZE
 //}
 
-type SizeComputer func(v Value) uintptr
+type SizeComputer func(v interface{}) uintptr
 
 func EstimateUnarySizeIncrease(op syntax.Token, x Value) (uintptr, SizeComputer) {
 	if x, ok := x.(HasUnaryResultEstimator); ok {

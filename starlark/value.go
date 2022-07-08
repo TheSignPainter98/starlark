@@ -560,7 +560,7 @@ func (x String) SizeOfBinaryResult(op syntax.Token, y Value, _ Side) (uintptr, S
 			return 1 + uintptr(len(x)+len(y)), nil
 		}
 	case syntax.PERCENT:
-		return 0, func(r Value) uintptr { return 1 + uintptr(r.(String).Len()) }
+		return 0, func(r interface{}) uintptr { return 1 + uintptr(r.(String).Len()) }
 	}
 	return 0, nil
 }
