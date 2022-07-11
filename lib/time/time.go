@@ -73,9 +73,12 @@ var Module = &starlarkstruct.Module{
 // Starlark scripts to be fully deterministic.
 var NowFunc = time.Now
 
-func parseDuration(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func parseDuration(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var d Duration
 	err := starlark.UnpackPositionalArgs("parse_duration", args, kwargs, 1, &d)
+	if err != nil {
+		err = thread.DeclareSizeIncrease(1, b.Name())
+	}
 	return d, err
 }
 
