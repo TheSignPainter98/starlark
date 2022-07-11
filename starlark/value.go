@@ -191,6 +191,11 @@ type Indexable interface {
 	Len() int
 }
 
+type HasIndexResultSizeEstimator interface {
+	Indexable
+	IndexSizeIncrease(i int) (uintptr, SizeComputer)
+}
+
 // A Sliceable is a sequence that can be cut into pieces with the slice operator (x[i:j:step]).
 //
 // All native indexable objects are sliceable.
@@ -211,6 +216,11 @@ type Sliceable interface {
 type HasSetIndex interface {
 	Indexable
 	SetIndex(index int, v Value) error
+}
+
+type HasSetIndexSizeEstimator interface {
+	HasSetIndex
+	SetIndexSizeIncrease(index int, val Value) (uintptr, SizeComputer)
 }
 
 var (
@@ -258,6 +268,11 @@ type Mapping interface {
 	Get(Value) (v Value, found bool, err error)
 }
 
+type HasMappingResultSizeEstimator interface {
+	Mapping
+	GetResultSizeIncrease(Value) (uintptr, SizeComputer)
+}
+
 // An IterableMapping is a mapping that supports key enumeration.
 type IterableMapping interface {
 	Mapping
@@ -274,6 +289,11 @@ type HasSetKey interface {
 }
 
 var _ HasSetKey = (*Dict)(nil)
+
+type HasSetKeySizeEstimator interface {
+	HasSetKey
+	SetKeySizeIncrease(k, v Value) (uintptr, SizeComputer)
+}
 
 // A HasBinary value may be used as either operand of these binary operators:
 //     +   -   *   /   //   %   in   not in   |   &   ^   <<   >>

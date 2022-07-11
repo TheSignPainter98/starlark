@@ -414,7 +414,10 @@ loop:
 			y := stack[sp-2]
 			x := stack[sp-3]
 			sp -= 3
-			err = setIndex(thread, x, y, z)
+			presize, increaseSizeOf := setIndexSizeIncrease(x, y, z)
+			_, err = accountAllocsForOperation(thread, "interp loop setindex", func() (interface{}, error) {
+				return x, setIndex(thread, x, y, z)
+			}, presize, increaseSizeOf)
 			if err != nil {
 				break loop
 			}
@@ -423,12 +426,15 @@ loop:
 			y := stack[sp-1]
 			x := stack[sp-2]
 			sp -= 2
-			z, err2 := getIndex(x, y)
+			presize, resultSizeOf := getIndexSizeIncrease(x, y)
+			z, err2 := accountAllocsForOperation(thread, "interp loop index", func() (interface{}, error) {
+				return getIndex(x, y)
+			}, presize, resultSizeOf)
 			if err2 != nil {
 				err = err2
 				break loop
 			}
-			stack[sp] = z
+			stack[sp] = z.(Value)
 			sp++
 
 		case compile.ATTR:

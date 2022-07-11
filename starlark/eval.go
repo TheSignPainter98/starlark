@@ -684,6 +684,18 @@ func getIndex(x, y Value) (Value, error) {
 	return nil, fmt.Errorf("unhandled index operation %s[%s]", x.Type(), y.Type())
 }
 
+func getIndexSizeIncrease(x, y Value) (presize uintptr, sizeof SizeComputer) {
+	switch x := x.(type) {
+	case HasMappingResultSizeEstimator:
+		presize, sizeof = x.GetResultSizeIncrease(y)
+	case HasIndexResultSizeEstimator:
+		if y, err := AsInt32(y); err == nil {
+			presize, sizeof = x.IndexSizeIncrease(y)
+		}
+	}
+	return
+}
+
 func outOfRange(i, n int, x Value) error {
 	if n == 0 {
 		return fmt.Errorf("index %d out of range: empty %s", i, x.Type())
@@ -732,6 +744,18 @@ func setIndex(thread *Thread, x, y, z Value) error {
 		return fmt.Errorf("%s value does not support item assignment", x.Type())
 	}
 	return nil
+}
+
+func setIndexSizeIncrease(x, y, z Value) (presize uintptr, sizeOf SizeComputer) {
+	switch x := x.(type) {
+	case HasSetKeySizeEstimator:
+		presize, sizeOf = x.SetKeySizeIncrease(y, z)
+	case HasSetIndexSizeEstimator:
+		if y, err := AsInt32(y); err == nil {
+			presize, sizeOf = x.SetIndexSizeIncrease(y, z)
+		}
+	}
+	return
 }
 
 // Unary applies a unary operator (+, -, ~, not) to its operand.

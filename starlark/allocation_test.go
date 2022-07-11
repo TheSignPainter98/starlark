@@ -321,35 +321,55 @@ func TestSetUnion(t *testing.T) {
 	testAllocationsIncreaseLinearly(t, "set.union", gen, 1000, 100000, 1)
 }
 
-type dummyType string
+type dummyType struct{ s string }
 
-var _ starlark.HasUnaryResultEstimator = dummyType("")
-var _ starlark.HasBinaryResultEstimator = dummyType("")
+var _ starlark.HasUnaryResultEstimator = new(dummyType)
+var _ starlark.HasBinaryResultEstimator = new(dummyType)
+var _ starlark.HasIndexResultSizeEstimator = new(dummyType)
+var _ starlark.HasSetIndexSizeEstimator = new(dummyType)
 
-func (d dummyType) String() string       { return string(d) }
-func (_ dummyType) Type() string         { return "dummyType" }
-func (_ dummyType) Freeze()              {}
-func (_ dummyType) Truth() starlark.Bool { return false }
-func (d dummyType) Hash() (uint32, error) {
+func (d *dummyType) String() string       { return string(d.s) }
+func (_ *dummyType) Type() string         { return "dummyType" }
+func (_ *dummyType) Freeze()              {}
+func (_ *dummyType) Truth() starlark.Bool { return false }
+func (d *dummyType) Hash() (uint32, error) {
 	return 0, fmt.Errorf("%s is not a hashable type", d.Type())
 }
-func (d dummyType) Unary(op syntax.Token) (starlark.Value, error) {
-	return starlark.String(strings.ToUpper(string(d))), nil
+func (d *dummyType) Unary(op syntax.Token) (starlark.Value, error) {
+	return starlark.String(strings.ToUpper(string(d.s))), nil
 }
-func (d dummyType) SizeOfUnaryResult(_ syntax.Token) (uintptr, starlark.SizeComputer) {
-	return 1 + uintptr(len(d)), nil
+func (d *dummyType) SizeOfUnaryResult(_ syntax.Token) (uintptr, starlark.SizeComputer) {
+	return 1 + uintptr(len(d.s)), nil
 }
-func (x dummyType) Binary(_ syntax.Token, y starlark.Value, _ starlark.Side) (starlark.Value, error) {
-	if y, ok := y.(dummyType); ok {
-		return dummyType(string(x) + string(y)), nil // Concatenate regardless of binary op
+func (x *dummyType) Binary(_ syntax.Token, y starlark.Value, _ starlark.Side) (starlark.Value, error) {
+	if y, ok := y.(*dummyType); ok {
+		return &dummyType{string(x.s) + string(y.s)}, nil // Concatenate regardless of binary op
 	}
 	return nil, nil
 }
-func (x dummyType) SizeOfBinaryResult(_ syntax.Token, y starlark.Value, _ starlark.Side) (uintptr, starlark.SizeComputer) {
-	if y, ok := y.(dummyType); ok {
-		return 1 + uintptr(len(x)+len(y)), nil
+func (x *dummyType) SizeOfBinaryResult(_ syntax.Token, y starlark.Value, _ starlark.Side) (uintptr, starlark.SizeComputer) {
+	if y, ok := y.(*dummyType); ok {
+		return 2 + uintptr(len(x.s)+len(y.s)), nil
 	}
 	return 0, nil
+}
+func (d *dummyType) Index(_ int) starlark.Value {
+	return &dummyType{d.s[:]}
+}
+func (d *dummyType) Len() int {
+	return len(d.s)
+}
+func (d *dummyType) IndexSizeIncrease(_ int) (uintptr, starlark.SizeComputer) {
+	return 2 + uintptr(len(d.s)), nil
+}
+func (d *dummyType) SetIndex(_ int, v starlark.Value) error {
+	*d = dummyType{d.s[:]}
+	return nil
+}
+func (_ *dummyType) SetIndexSizeIncrease(_ int, _ starlark.Value) (uintptr, starlark.SizeComputer) {
+	return 0, func(r interface{}) uintptr {
+		return uintptr(len(r.(*dummyType).s))
+	}
 }
 
 func TestUnary(t *testing.T) {
@@ -358,7 +378,7 @@ func TestUnary(t *testing.T) {
 			return fmt.Sprintf("%sa", op), globals("a", dummyInt(n))
 		}
 		genCustom := func(n uint) (string, starlark.StringDict) {
-			return fmt.Sprintf("%sa", op), globals("a", dummyType(dummyString(n, 'a')))
+			return fmt.Sprintf("%sa", op), globals("a", &dummyType{dummyString(n, 'a')})
 		}
 		testAllocationsIncreaseLinearly(t, "unary", genInt, 1000, 100000, 1/float64(8*starlark.UNIT_SIZE))
 		testAllocationsIncreaseLinearly(t, "unary", genCustom, 1000, 100000, 1)
@@ -386,7 +406,7 @@ func TestBinary(t *testing.T) {
 
 	for _, op := range []string{"+", "-", "*", "//", "%", "&", "|", "^"} {
 		genCustoms := func(n uint) (string, starlark.StringDict) {
-			return fmt.Sprintf("a %s b", op), globals("a", dummyType(dummyString(n/2, 'a')), "b", dummyType(dummyString(n/2, 'b')))
+			return fmt.Sprintf("a %s b", op), globals("a", &dummyType{dummyString(n/2, 'a')}, "b", &dummyType{dummyString(n/2, 'b')})
 		}
 		testAllocationsIncreaseLinearly(t, "binary", genIntsWithOp(op), 10000, 100000, opIntAllocs[op]/float64(8*starlark.UNIT_SIZE))
 		testAllocationsIncreaseLinearly(t, "binary", genCustoms, 1000, 100000, 1)
@@ -417,13 +437,27 @@ func TestInplaceBinary(t *testing.T) {
 
 	for _, op := range []string{"+", "-", "*", "//", "%", "&", "|", "^"} {
 		genCustoms := func(n uint) (string, starlark.StringDict) {
-			return fmt.Sprintf("c = a; c %s= b", op), globals("a", dummyType(dummyString(n/2, 'a')), "b", dummyType(dummyString(n/2, 'b')))
+			return fmt.Sprintf("c = a; c %s= b", op), globals("a", &dummyType{dummyString(n/2, 'a')}, "b", &dummyType{dummyString(n/2, 'b')})
 		}
 
 		testAllocationsIncreaseLinearly(t, "inplace_binary", genIntsWithOp(op), 10000, 100000, opIntAllocs[op]/float64(8*starlark.UNIT_SIZE))
 		testAllocationsIncreaseLinearly(t, "inplace_binary", genCustoms, 1000, 100000, 1)
 	}
 	testAllocationsAreConstant(t, "binary", genIntsWithOp("/"), 100, 1000, opIntAllocs["/"])
+}
+
+func TestIndex(t *testing.T) {
+	gen := func(n uint) (string, starlark.StringDict) {
+		return "d[i]", globals("d", &dummyType{dummyString(n, 'a')}, "i", 1)
+	}
+	testAllocationsIncreaseLinearly(t, "index", gen, 1000, 100000, 1)
+}
+
+func TestSetIndex_(t *testing.T) { // TODO(kcza): change names
+	gen := func(n uint) (string, starlark.StringDict) {
+		return "d[i] = v", globals("d", &dummyType{dummyString(n, 'a')}, "i", 1, "v", -2)
+	}
+	testAllocationsIncreaseLinearly(t, "index", gen, 1000, 100000, 1)
 }
 
 type dummyIterable struct{ max uint }
