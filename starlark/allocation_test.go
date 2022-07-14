@@ -384,7 +384,7 @@ func (dt *dummyType) Iterate() starlark.Iterator {
 }
 
 func (it *dummyTypeIterator) Next(p *starlark.Value) (true bool) {
-	*p = dummyType{it.s[:]}
+	*p = &dummyType{it.s[:]}
 	return
 }
 func (it *dummyTypeIterator) Done() {}
