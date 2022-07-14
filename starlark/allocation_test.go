@@ -322,11 +322,18 @@ func TestSetUnionAllocations(t *testing.T) {
 }
 
 type dummyType struct{ s string }
+type dummyTypeIterator struct{ *dummyType }
 
-var _ starlark.HasUnaryResultEstimator = new(dummyType)
-var _ starlark.HasBinaryResultEstimator = new(dummyType)
-var _ starlark.HasIndexResultSizeEstimator = new(dummyType)
-var _ starlark.HasSetIndexSizeEstimator = new(dummyType)
+var (
+	_ starlark.Value                       = new(dummyType)
+	_ starlark.HasUnaryResultEstimator     = new(dummyType)
+	_ starlark.HasBinaryResultEstimator    = new(dummyType)
+	_ starlark.HasIndexResultSizeEstimator = new(dummyType)
+	_ starlark.HasSetIndexSizeEstimator    = new(dummyType)
+	_ starlark.Iterable                    = new(dummyType)
+	_ starlark.Iterator                    = new(dummyTypeIterator)
+	_ starlark.HasIteratorSizeEstimator    = new(dummyTypeIterator)
+)
 
 func (d *dummyType) String() string       { return string(d.s) }
 func (_ *dummyType) Type() string         { return "dummyType" }
@@ -370,6 +377,19 @@ func (_ *dummyType) SetIndexSizeIncrease(_ int, _ starlark.Value) (uintptr, star
 	return 0, func(r interface{}) uintptr {
 		return uintptr(len(r.(*dummyType).s))
 	}
+}
+
+func (dt *dummyType) Iterate() starlark.Iterator {
+	return &dummyTypeIterator{dt}
+}
+
+func (it *dummyTypeIterator) Next(p *starlark.Value) (true bool) {
+	*p = dummyType{it.s[:]}
+	return
+}
+func (it *dummyTypeIterator) Done() {}
+func (it *dummyTypeIterator) IteratorNextSizeIncrease() (uintptr, starlark.SizeComputer) {
+	return 0, func(v interface{}) uintptr { return uintptr(len(v.(dummyType).s)) }
 }
 
 func TestUnaryAllocations(t *testing.T) {

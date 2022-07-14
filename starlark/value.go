@@ -172,6 +172,11 @@ type Iterable interface {
 	Iterate() Iterator // must be followed by call to Iterator.Done
 }
 
+type HasSizedIterator interface {
+	Iterable
+	IterateSizeIncrease() (uintptr, SizeComputer)
+}
+
 // A Sequence is a sequence of values of known length.
 type Sequence interface {
 	Iterable
@@ -252,6 +257,11 @@ type Iterator interface {
 	// advances the iterator, and returns true.
 	Next(p *Value) bool
 	Done()
+}
+
+type HasIteratorSizeEstimator interface {
+	Iterator
+	IteratorNextSizeIncrease() (uintptr, SizeComputer)
 }
 
 // A Mapping is a mapping from keys to values, such as a dictionary.

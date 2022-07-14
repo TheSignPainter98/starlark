@@ -378,11 +378,20 @@ loop:
 		case compile.ITERPUSH:
 			x := stack[sp-1]
 			sp--
-			iter := Iterate(x)
-			if iter == nil {
+			var delta uintptr
+			var iteratorSizeOf SizeComputer
+			if x, ok := x.(HasSizedIterator); ok {
+				delta, iteratorSizeOf = x.IterateSizeIncrease()
+			}
+			iterOp := func() (interface{}, error) {
+				return Iterate(x), nil
+			}
+			iter2, _ := accountAllocsForOperation(thread, "interp loop iterpush", iterOp, delta, iteratorSizeOf)
+			if iter2 == nil {
 				err = fmt.Errorf("%s value is not iterable", x.Type())
 				break loop
 			}
+			iter := iter2.(Iterator)
 			if err = thread.DeclareSizeIncrease(1, "interp loop iterpush"); err != nil {
 				break loop
 			}
@@ -390,10 +399,21 @@ loop:
 
 		case compile.ITERJMP:
 			iter := iterstack[len(iterstack)-1]
-			if iter.Next(&stack[sp]) {
-				sp++
-			} else {
-				pc = arg
+			var presize uintptr
+			var resultSizeOf SizeComputer
+			if iter, ok := iter.(HasIteratorSizeEstimator); ok {
+				presize, resultSizeOf = iter.IteratorNextSizeIncrease()
+			}
+			_, err = accountAllocsForOperation(thread, "interp loop iter next", func() (interface{}, error) {
+				if iter.Next(&stack[sp]) {
+					sp++
+				} else {
+					pc = arg
+				}
+				return stack[sp], nil
+			}, presize, resultSizeOf)
+			if err != nil {
+				break loop
 			}
 
 		case compile.ITERPOP:
