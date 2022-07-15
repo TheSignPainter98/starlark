@@ -40,6 +40,136 @@ func TestPositiveDeltaDeclaration(t *testing.T) {
 	}
 }
 
+func TestAllocAccountingWrapper(t *testing.T) {
+	type allocWrapperTest struct {
+		Name           string
+		Op             func() (interface{}, error)
+		ExpectedResult interface{}
+		ExpectedDelta  uintptr
+		ExpectOpDone   bool
+		Prealloc       uintptr
+		ResultSizeOf   starlark.Sizer
+		ExpectPass     bool
+		MaxAllocations uintptr
+	}
+
+	dummyStrLen := uint(100)
+	dummyStr := dummyString(dummyStrLen, 'a')
+	strlenSizeOf := func(s interface{}) uintptr { return 1 + uintptr(len(s.(string))) }
+	expectedDummyStrDelta := strlenSizeOf(dummyStr)
+	opDone := false
+
+	accountingTests := []allocWrapperTest{
+		{ // Ensure ok when no allocations made
+			Name:           "no-allocs",
+			Op:             func() (interface{}, error) { opDone = true; return nil, nil },
+			ExpectedResult: nil,
+			ExpectedDelta:  0,
+			ExpectOpDone:   true,
+			Prealloc:       0,
+			ResultSizeOf:   nil,
+			ExpectPass:     true,
+			MaxAllocations: 1,
+		},
+		{ // Ensure ok when a small number of preallocations declared
+			Name:           "ok-preallocs",
+			Op:             func() (interface{}, error) { opDone = true; return dummyStr, nil },
+			ExpectedResult: dummyStr,
+			ExpectedDelta:  expectedDummyStrDelta,
+			ExpectOpDone:   true,
+			Prealloc:       strlenSizeOf(dummyStr),
+			ResultSizeOf:   nil,
+			ExpectPass:     true,
+			MaxAllocations: 2 * uintptr(dummyStrLen),
+		},
+		{ // Ensure ok when a small number of post-allocations are detected
+			Name:           "ok-postallocs",
+			Op:             func() (interface{}, error) { opDone = true; return dummyStr, nil },
+			ExpectedResult: dummyStr,
+			ExpectedDelta:  expectedDummyStrDelta,
+			ExpectOpDone:   true,
+			Prealloc:       0,
+			ResultSizeOf:   strlenSizeOf,
+			ExpectPass:     true,
+			MaxAllocations: 2 * uintptr(dummyStrLen),
+		},
+		{ // Ensure cancellation when too many allocations are requested before the operation
+			Name:           "pre-fail",
+			Op:             func() (interface{}, error) { opDone = true; return dummyStr, nil },
+			ExpectedResult: nil,
+			ExpectedDelta:  expectedDummyStrDelta,
+			ExpectOpDone:   false,
+			Prealloc:       strlenSizeOf(dummyStr),
+			ResultSizeOf:   nil,
+			ExpectPass:     false,
+			MaxAllocations: 1,
+		},
+		{ // Ensure cancellation when too many allocations detected after operation
+			Name:           "post-fail",
+			Op:             func() (interface{}, error) { opDone = true; return dummyStr, nil },
+			ExpectedResult: nil,
+			ExpectedDelta:  expectedDummyStrDelta,
+			ExpectOpDone:   true,
+			Prealloc:       0,
+			ResultSizeOf:   strlenSizeOf,
+			ExpectPass:     false,
+			MaxAllocations: 1,
+		},
+		{ // Ensure ok when more allocations detected in result than the non-zero preallocated, and where the sum of these two values would be too many allocations
+			Name:           "ok-prealloc-and-sizer-increase",
+			Op:             func() (interface{}, error) { opDone = true; return dummyStr, nil },
+			ExpectedResult: dummyStr,
+			ExpectedDelta:  expectedDummyStrDelta,
+			ExpectOpDone:   true,
+			Prealloc:       uintptr(0.5 * float64(dummyStrLen)),
+			ResultSizeOf:   strlenSizeOf,
+			ExpectPass:     true,
+			MaxAllocations: uintptr(1.25 * float64(strlenSizeOf(dummyStr))),
+		},
+		{ // Ensure ok when fewer allocations detected in result than the non-zero preallocated, and where the sum of these two values would be too many allocations
+			Name:           "ok-prealloc-and-sizer-decrease",
+			Op:             func() (interface{}, error) { opDone = true; return dummyStr, nil },
+			ExpectedResult: dummyStr,
+			ExpectedDelta:  expectedDummyStrDelta,
+			ExpectOpDone:   true,
+			Prealloc:       uintptr(1.2 * float64(dummyStrLen)),
+			ResultSizeOf:   strlenSizeOf,
+			ExpectPass:     true,
+			MaxAllocations: uintptr(1.25 * float64(strlenSizeOf(dummyStr))),
+		},
+	}
+	for _, test := range accountingTests {
+		opDone = false
+		thread := new(starlark.Thread)
+		thread.SetMaxAllocations(test.MaxAllocations)
+		result, err := starlark.AccountAllocsForOperation(thread, test.Name, test.Op, test.Prealloc, test.ResultSizeOf)
+		if result != test.ExpectedResult {
+			t.Errorf("%s: Incorrect result: expected %v but got %v", test.Name, test.ExpectedResult, result)
+		}
+		if test.ExpectPass && err != nil {
+			t.Errorf("%s: Unexpected error: %v", test.Name, err)
+		} else if !test.ExpectPass && err == nil {
+			t.Errorf("%s: Expected error but test incorrectly passed", test.Name)
+		}
+		if thread.Allocations() != test.ExpectedDelta {
+			t.Errorf("%s: Expected %d allocations but got %d instead", test.Name, test.ExpectedDelta, thread.Allocations())
+		}
+		if result != nil && err != nil {
+			t.Errorf("%s: Expected either a nil result or a nil error", test.Name)
+		}
+		if opDone != test.ExpectOpDone {
+			notStr := func(b bool) string {
+				if b {
+					return ""
+				} else {
+					return " not"
+				}
+			}
+			t.Errorf("%s: Expected operation to%s be done, but operation was%s done", test.Name, notStr(test.ExpectOpDone), notStr(opDone))
+		}
+	}
+}
+
 func TestBytesAllocations(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
 		return `bytes(b)`, globals("b", dummyString(n, 'b'))

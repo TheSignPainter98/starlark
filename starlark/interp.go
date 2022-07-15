@@ -176,7 +176,7 @@ loop:
 			binOp := func() (interface{}, error) {
 				return Binary(binop, x, y)
 			}
-			z, err2 := accountAllocsForOperation(thread, "interp loop binary op", binOp, delta, computeResultSize)
+			z, err2 := AccountAllocsForOperation(thread, "interp loop binary op", binOp, delta, computeResultSize)
 			if err2 != nil {
 				err = err2
 				break loop
@@ -196,7 +196,7 @@ loop:
 			unOp := func() (interface{}, error) {
 				return Unary(unop, x)
 			}
-			y, err2 := accountAllocsForOperation(thread, "interp loop unary op", unOp, delta, computeResultSize)
+			y, err2 := AccountAllocsForOperation(thread, "interp loop unary op", unOp, delta, computeResultSize)
 			if err2 != nil {
 				err = err2
 				break loop
@@ -230,7 +230,7 @@ loop:
 				}
 				return
 			}
-			z, err2 := accountAllocsForOperation(thread, "interp loop inplace-add", binOp, delta, resultSizeOf)
+			z, err2 := AccountAllocsForOperation(thread, "interp loop inplace-add", binOp, delta, resultSizeOf)
 			if err2 != nil {
 				err = err2
 				break loop
@@ -386,7 +386,7 @@ loop:
 			iterOp := func() (interface{}, error) {
 				return Iterate(x), nil
 			}
-			iter2, _ := accountAllocsForOperation(thread, "interp loop iterpush", iterOp, delta, iteratorSizeOf)
+			iter2, _ := AccountAllocsForOperation(thread, "interp loop iterpush", iterOp, delta, iteratorSizeOf)
 			if iter2 == nil {
 				err = fmt.Errorf("%s value is not iterable", x.Type())
 				break loop
@@ -404,7 +404,7 @@ loop:
 			if iter, ok := iter.(HasSizedNext); ok {
 				presize, resultSizeOf = iter.NextSizer()
 			}
-			_, err = accountAllocsForOperation(thread, "interp loop iter next", func() (interface{}, error) {
+			_, err = AccountAllocsForOperation(thread, "interp loop iter next", func() (interface{}, error) {
 				if iter.Next(&stack[sp]) {
 					sp++
 				} else {
@@ -435,7 +435,7 @@ loop:
 			x := stack[sp-3]
 			sp -= 3
 			presize, increaseSizeOf := setIndexSizeIncrease(x, y, z)
-			_, err = accountAllocsForOperation(thread, "interp loop setindex", func() (interface{}, error) {
+			_, err = AccountAllocsForOperation(thread, "interp loop setindex", func() (interface{}, error) {
 				return x, setIndex(thread, x, y, z)
 			}, presize, increaseSizeOf)
 			if err != nil {
@@ -447,7 +447,7 @@ loop:
 			x := stack[sp-2]
 			sp -= 2
 			presize, resultSizeOf := getIndexSizeIncrease(x, y)
-			z, err2 := accountAllocsForOperation(thread, "interp loop index", func() (interface{}, error) {
+			z, err2 := AccountAllocsForOperation(thread, "interp loop index", func() (interface{}, error) {
 				return getIndex(x, y)
 			}, presize, resultSizeOf)
 			if err2 != nil {
@@ -730,7 +730,7 @@ loop:
 	return result, err
 }
 
-func accountAllocsForOperation(thread *Thread, opName string, op func() (interface{}, error), delta uintptr, computeResultSize Sizer) (result interface{}, err error) {
+func AccountAllocsForOperation(thread *Thread, opName string, op func() (interface{}, error), delta uintptr, computeResultSize Sizer) (result interface{}, err error) {
 	if delta != 0 {
 		if err = thread.DeclareSizeIncrease(delta, opName); err != nil {
 			return
