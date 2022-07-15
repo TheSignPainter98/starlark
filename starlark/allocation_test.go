@@ -595,18 +595,106 @@ func TestInterpLoopInplaceBinaryAllocations(t *testing.T) {
 	testAllocationsAreConstant(t, "binary", genIntsWithOp("/"), 100, 1000, opIntAllocs["/"])
 }
 
+type dummyMapping map[string]string
+
+var (
+	_ starlark.Value          = (*dummyMapping)(nil)
+	_ starlark.Mapping        = (*dummyMapping)(nil)
+	_ starlark.HasSizedGet    = (*dummyMapping)(nil)
+	_ starlark.HasSetKey      = (*dummyMapping)(nil)
+	_ starlark.HasSizedSetKey = (*dummyMapping)(nil)
+)
+
+func (dm *dummyMapping) String() string       { return fmt.Sprintf("%v", *dm) }
+func (_ *dummyMapping) Type() string          { return "dummyMapping" }
+func (dm *dummyMapping) Freeze()              {}
+func (dm *dummyMapping) Truth() starlark.Bool { return false }
+func (dm *dummyMapping) Hash() (uint32, error) {
+	return 0, fmt.Errorf("%s is not a hashable type", dm.Type())
+}
+func (dm *dummyMapping) Get(k starlark.Value) (v starlark.Value, found bool, err error) {
+	if k, ok := k.(starlark.String); ok {
+		var s string
+		s, found = (*dm)[string(k)]
+		v = starlark.String(fmt.Sprintf("((%s))", s[:]))
+	} else {
+		err = fmt.Errorf("Dummy mapping needs string key, got a %s", k.Type())
+	}
+	return
+}
+func (dm *dummyMapping) GetGetSizer(k starlark.Value) (uintptr, starlark.Sizer) {
+	return 0, func(s interface{}) uintptr { return 1 + uintptr(len(string(s.(starlark.String)))) }
+}
+func (dm *dummyMapping) SetKey(k, v starlark.Value) error {
+	if k, ok := k.(starlark.String); ok {
+		if v, ok := v.(starlark.String); ok {
+			(*dm)[string(k)] = string(v)
+			return nil
+		}
+		return fmt.Errorf("Value must be a string, got a %s", v.Type())
+	}
+	return fmt.Errorf("Key must be a string, got a %s", k.Type())
+}
+func (dm *dummyMapping) GetSetKeySizer(_, _ starlark.Value) (uintptr, starlark.Sizer) {
+	initialSize := len(*dm)
+	return 0, func(dm interface{}) (delta uintptr) {
+		if len(*(dm.(*dummyMapping))) != initialSize {
+			delta = 1
+		}
+		return
+	}
+}
+
 func TestInterpLoopIndexAllocations(t *testing.T) {
-	gen := func(n uint) (string, starlark.StringDict) {
+	genIndex := func(n uint) (string, starlark.StringDict) {
 		return "d[i]", globals("d", &dummyType{dummyString(n, 'a')}, "i", 1)
 	}
-	testAllocationsIncreaseLinearly(t, "index", gen, 1000, 100000, 1)
+	testAllocationsIncreaseLinearly(t, "index", genIndex, 1000, 100000, 1)
+	genMappingGet := func(n uint) (string, starlark.StringDict) {
+		return "d[k]", globals("d", &dummyMapping{"k": dummyString(n, 'a')}, "k", "k")
+	}
+	testAllocationsIncreaseLinearly(t, "mapping-get", genMappingGet, 1000, 100000, 1)
 }
 
 func TestInterpLoopSetIndexAllocations(t *testing.T) {
-	gen := func(n uint) (string, starlark.StringDict) {
+	// Test optional size classes work
+	genIndexSet := func(n uint) (string, starlark.StringDict) {
 		return "d[i] = v", globals("d", &dummyType{dummyString(n, 'a')}, "i", 1, "v", -2)
 	}
-	testAllocationsIncreaseLinearly(t, "index", gen, 1000, 100000, 1)
+	testAllocationsIncreaseLinearly(t, "setindex", genIndexSet, 1000, 100000, 1)
+	genMappingSet := func(n uint) (string, starlark.StringDict) {
+		return "d[k] = v", globals("d", starlark.NewDict(1), "k", dummyString(n/2, 'a'), "v", dummyString(n/2, 'b'))
+	}
+	testAllocationsAreConstant(t, "mapping-set", genMappingSet, 100, 10000, 1)
+	genCustomMappingSet := func(n uint) (string, starlark.StringDict) {
+		return "d[k] = v", globals("d", &dummyMapping{}, "k", dummyString(n/2, 'a'), "v", dummyString(n/2, 'b'))
+	}
+	testAllocationsAreConstant(t, "mapping-set-custom", genCustomMappingSet, 100, 10000, 1)
+
+	// Test allocations caused by insertion of unique and non-unique keys
+	genRepeatedSetIndex := func(n uint) (string, starlark.StringDict) {
+		prog := new(strings.Builder)
+		prog.Grow((len("d[] = \n") + int(2*math.Log2(float64(n)))) * int(n))
+		globals := make(starlark.StringDict, n+1)
+		globals["d"] = starlark.NewDict(int(n))
+		for i := uint(0); i < n; i++ {
+			s := fmt.Sprintf("_%d", i)
+			globals[s] = starlark.String(s)
+			prog.WriteString(fmt.Sprintf("d[%s] = %s\n", s, s))
+		}
+		return prog.String(), globals
+	}
+	testAllocationsIncreaseLinearly(t, "setindex", genRepeatedSetIndex, 1000, 100000, 1)
+	genNonUniqueRepeated := func(n uint) (string, starlark.StringDict) {
+		prog := new(strings.Builder)
+		prog.Grow(len("d[e] = e\n") * int(n))
+		for i := uint(0); i < n; i++ {
+			prog.WriteString("d[e] = e\n")
+		}
+		return prog.String(), globals("d", starlark.NewDict(1), "e", starlark.String("_e"))
+	}
+
+	testAllocationsAreConstant(t, "setindex", genNonUniqueRepeated, 1000, 100000, 1)
 }
 
 type dummyIterable struct{ max uint }
@@ -703,33 +791,6 @@ func TestInterpLoopMakeListAllocations(t *testing.T) {
 		return fmt.Sprintf("s = [%s]", listContents.String()), globals
 	}
 	testAllocationsIncreaseLinearly(t, "makelist", gen, 1000, 100000, 1)
-}
-
-func TestInterpLoopSetIndexAllocations(t *testing.T) {
-	gen := func(n uint) (string, starlark.StringDict) {
-		prog := new(strings.Builder)
-		prog.Grow((len("d[] = \n") + int(2*math.Log2(float64(n)))) * int(n))
-		globals := make(starlark.StringDict, n+1)
-		globals["d"] = starlark.NewDict(int(n))
-		for i := uint(0); i < n; i++ {
-			s := fmt.Sprintf("_%d", i)
-			globals[s] = starlark.String(s)
-			prog.WriteString(fmt.Sprintf("d[%s] = %s\n", s, s))
-		}
-		return prog.String(), globals
-	}
-	testAllocationsIncreaseLinearly(t, "setindex", gen, 1000, 100000, 1)
-
-	genNonUnique := func(n uint) (string, starlark.StringDict) {
-		prog := new(strings.Builder)
-		prog.Grow(len("d[e] = e\n") * int(n))
-		for i := uint(0); i < n; i++ {
-			prog.WriteString("d[e] = e\n")
-		}
-		return prog.String(), globals("d", starlark.NewDict(1), "e", starlark.String("_e"))
-	}
-
-	testAllocationsAreConstant(t, "setindex", genNonUnique, 1000, 100000, 1)
 }
 
 func TestInterpLoopMakeFuncAllocations(t *testing.T) {

@@ -305,6 +305,8 @@ type HasSizedSetKey interface {
 	GetSetKeySizer(k, v Value) (uintptr, Sizer)
 }
 
+var _ HasSizedSetKey = (*Dict)(nil)
+
 // A HasBinary value may be used as either operand of these binary operators:
 //     +   -   *   /   //   %   in   not in   |   &   ^   <<   >>
 //
@@ -846,6 +848,16 @@ func (d *Dict) Type() string                                    { return "dict" 
 func (d *Dict) Freeze()                                         { d.ht.freeze() }
 func (d *Dict) Truth() Bool                                     { return d.Len() > 0 }
 func (d *Dict) Hash() (uint32, error)                           { return 0, fmt.Errorf("unhashable type: dict") }
+
+func (d *Dict) GetSetKeySizer(_, _ Value) (uintptr, Sizer) {
+	initialLen := d.Len()
+	return 0, func(d interface{}) (delta uintptr) {
+		if newLen := d.(*Dict).Len(); initialLen < newLen {
+			delta = 1
+		}
+		return
+	}
+}
 
 func (d *Dict) Attr(name string) (Value, error) { return builtinAttr(d, name, dictMethods) }
 func (d *Dict) AttrNames() []string             { return builtinAttrNames(dictMethods) }

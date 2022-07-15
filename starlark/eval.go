@@ -708,16 +708,9 @@ func outOfRange(i, n int, x Value) error {
 func setIndex(thread *Thread, x, y, z Value) error {
 	switch x := x.(type) {
 	case HasSetKey:
-		var found bool
 		if x, ok := x.(Mapping); ok {
-			var err error
-			_, found, err = x.Get(y)
+			_, _, err := x.Get(y)
 			if err != nil {
-				return err
-			}
-		}
-		if !found {
-			if err := thread.DeclareSizeIncrease(1, "setIndex"); err != nil {
 				return err
 			}
 		}
