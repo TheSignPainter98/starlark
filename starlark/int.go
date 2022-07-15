@@ -57,9 +57,9 @@ var (
 	zero, one = makeSmallInt(0), makeSmallInt(1)
 	oneBig    = big.NewInt(1)
 
-	_ HasUnary                 = Int{}
-	_ HasUnaryResultEstimator  = Int{}
-	_ HasBinaryResultEstimator = Int{}
+	_ HasUnary       = Int{}
+	_ HasSizedUnary  = Int{}
+	_ HasSizedBinary = Int{}
 )
 
 // Unary implements the operations +int, -int, and ~int.
@@ -75,11 +75,11 @@ func (i Int) Unary(op syntax.Token) (Value, error) {
 	return nil, nil
 }
 
-func (i Int) SizeOfUnaryResult(_ syntax.Token) (uintptr, SizeComputer) {
+func (i Int) UnarySizer(_ syntax.Token) (uintptr, Sizer) {
 	return i.Size(), nil
 }
 
-func (x Int) SizeOfBinaryResult(op syntax.Token, y Value, _ Side) (uintptr, SizeComputer) {
+func (x Int) BinarySizer(op syntax.Token, y Value, _ Side) (uintptr, Sizer) {
 	switch op {
 	case syntax.PLUS:
 		if y, ok := y.(Int); ok {

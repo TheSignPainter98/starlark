@@ -208,7 +208,7 @@ loop:
 			x := stack[sp-2]
 			sp -= 2
 
-			delta, resultSizeComputer := EstimateBinarySizeIncrease(syntax.PLUS, x, y)
+			delta, resultSizeOf := EstimateBinarySizeIncrease(syntax.PLUS, x, y)
 			binOp := func() (z interface{}, err error) {
 				// It's possible that y is not Iterable but
 				// nonetheless defines x+y, in which case we
@@ -230,7 +230,7 @@ loop:
 				}
 				return
 			}
-			z, err2 := accountAllocsForOperation(thread, "interp loop inplace-add", binOp, delta, resultSizeComputer)
+			z, err2 := accountAllocsForOperation(thread, "interp loop inplace-add", binOp, delta, resultSizeOf)
 			if err2 != nil {
 				err = err2
 				break loop
@@ -379,8 +379,8 @@ loop:
 			x := stack[sp-1]
 			sp--
 			var delta uintptr
-			var iteratorSizeOf SizeComputer
-			if x, ok := x.(HasSizedIterator); ok {
+			var iteratorSizeOf Sizer
+			if x, ok := x.(HasSizedIterate); ok {
 				delta, iteratorSizeOf = x.IterateSizeIncrease()
 			}
 			iterOp := func() (interface{}, error) {
@@ -400,9 +400,9 @@ loop:
 		case compile.ITERJMP:
 			iter := iterstack[len(iterstack)-1]
 			var presize uintptr
-			var resultSizeOf SizeComputer
-			if iter, ok := iter.(HasIteratorSizeEstimator); ok {
-				presize, resultSizeOf = iter.IteratorNextSizeIncrease()
+			var resultSizeOf Sizer
+			if iter, ok := iter.(HasSizedNext); ok {
+				presize, resultSizeOf = iter.NextSizer()
 			}
 			_, err = accountAllocsForOperation(thread, "interp loop iter next", func() (interface{}, error) {
 				if iter.Next(&stack[sp]) {
@@ -730,7 +730,7 @@ loop:
 	return result, err
 }
 
-func accountAllocsForOperation(thread *Thread, opName string, op func() (interface{}, error), delta uintptr, computeResultSize SizeComputer) (result interface{}, err error) {
+func accountAllocsForOperation(thread *Thread, opName string, op func() (interface{}, error), delta uintptr, computeResultSize Sizer) (result interface{}, err error) {
 	if delta != 0 {
 		if err = thread.DeclareSizeIncrease(delta, opName); err != nil {
 			return

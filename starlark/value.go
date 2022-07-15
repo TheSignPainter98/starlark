@@ -172,9 +172,9 @@ type Iterable interface {
 	Iterate() Iterator // must be followed by call to Iterator.Done
 }
 
-type HasSizedIterator interface {
+type HasSizedIterate interface {
 	Iterable
-	IterateSizeIncrease() (uintptr, SizeComputer)
+	IterateSizeIncrease() (uintptr, Sizer)
 }
 
 // A Sequence is a sequence of values of known length.
@@ -196,9 +196,9 @@ type Indexable interface {
 	Len() int
 }
 
-type HasIndexResultSizeEstimator interface {
+type HasSizedIndex interface {
 	Indexable
-	IndexSizeIncrease(i int) (uintptr, SizeComputer)
+	IndexSizer(i int) (uintptr, Sizer)
 }
 
 // A Sliceable is a sequence that can be cut into pieces with the slice operator (x[i:j:step]).
@@ -223,9 +223,9 @@ type HasSetIndex interface {
 	SetIndex(index int, v Value) error
 }
 
-type HasSetIndexSizeEstimator interface {
+type HasSizedSetIndex interface {
 	HasSetIndex
-	SetIndexSizeIncrease(index int, val Value) (uintptr, SizeComputer)
+	SetIndexSizer(index int, val Value) (uintptr, Sizer)
 }
 
 var (
@@ -259,9 +259,9 @@ type Iterator interface {
 	Done()
 }
 
-type HasIteratorSizeEstimator interface {
+type HasSizedNext interface {
 	Iterator
-	IteratorNextSizeIncrease() (uintptr, SizeComputer)
+	NextSizer() (uintptr, Sizer)
 }
 
 // A Mapping is a mapping from keys to values, such as a dictionary.
@@ -278,9 +278,9 @@ type Mapping interface {
 	Get(Value) (v Value, found bool, err error)
 }
 
-type HasMappingResultSizeEstimator interface {
+type HasGetSizer interface {
 	Mapping
-	GetResultSizeIncrease(Value) (uintptr, SizeComputer)
+	GetGetSizer(Value) (uintptr, Sizer)
 }
 
 // An IterableMapping is a mapping that supports key enumeration.
@@ -300,9 +300,9 @@ type HasSetKey interface {
 
 var _ HasSetKey = (*Dict)(nil)
 
-type HasSetKeySizeEstimator interface {
+type HasSizedSetKey interface {
 	HasSetKey
-	SetKeySizeIncrease(k, v Value) (uintptr, SizeComputer)
+	GetSetKeySizer(k, v Value) (uintptr, Sizer)
 }
 
 // A HasBinary value may be used as either operand of these binary operators:
@@ -318,11 +318,11 @@ type HasBinary interface {
 	Binary(op syntax.Token, y Value, side Side) (Value, error)
 }
 
-type HasBinaryResultEstimator interface {
-	SizeOfBinaryResult(op syntax.Token, right Value, side Side) (uintptr, SizeComputer)
+type HasSizedBinary interface {
+	BinarySizer(op syntax.Token, right Value, side Side) (uintptr, Sizer)
 }
 
-var _ HasBinaryResultEstimator = (*Set)(nil)
+var _ HasSizedBinary = (*Set)(nil)
 
 type Side bool
 
@@ -342,8 +342,8 @@ type HasUnary interface {
 	Unary(op syntax.Token) (Value, error)
 }
 
-type HasUnaryResultEstimator interface {
-	SizeOfUnaryResult(op syntax.Token) (uintptr, SizeComputer)
+type HasSizedUnary interface {
+	UnarySizer(op syntax.Token) (uintptr, Sizer)
 }
 
 // A HasAttrs value has fields or methods that may be read by a dot expression (y = x.f).
@@ -583,7 +583,7 @@ func (s String) Slice(start, end, step int) Value {
 	return String(str)
 }
 
-func (x String) SizeOfBinaryResult(op syntax.Token, y Value, _ Side) (uintptr, SizeComputer) {
+func (x String) BinaryResultSizer(op syntax.Token, y Value, _ Side) (uintptr, Sizer) {
 	switch op {
 	case syntax.PLUS:
 		if y, ok := y.(String); ok {
@@ -952,7 +952,7 @@ func (x *List) CompareSameType(op syntax.Token, y_ Value, depth int) (bool, erro
 	return sliceCompare(op, x.elems, y.elems, depth)
 }
 
-func (x *List) SizeOfBinaryResult(op syntax.Token, y Value, _ Side) (uintptr, SizeComputer) {
+func (x *List) BinaryResultSizer(op syntax.Token, y Value, _ Side) (uintptr, Sizer) {
 	if y, ok := y.(Sequence); ok {
 		switch op {
 		case syntax.PLUS:
@@ -1082,7 +1082,7 @@ func (t Tuple) Hash() (uint32, error) {
 	return x, nil
 }
 
-func (x *Tuple) SizeOfBinaryResult(op syntax.Token, y Value, _ Side) (uintptr, SizeComputer) {
+func (x *Tuple) BinaryResultSizer(op syntax.Token, y Value, _ Side) (uintptr, Sizer) {
 	if y, ok := y.(Sequence); ok {
 		switch op {
 		case syntax.PLUS:
@@ -1177,7 +1177,7 @@ func (s *Set) Union(iter Iterator) (Value, error) {
 	return set, nil
 }
 
-func (x *Set) SizeOfBinaryResult(op syntax.Token, y Value, _ Side) (uintptr, SizeComputer) {
+func (x *Set) BinarySizer(op syntax.Token, y Value, _ Side) (uintptr, Sizer) {
 	if y, ok := y.(*Set); ok {
 		switch op {
 		case syntax.AMP:

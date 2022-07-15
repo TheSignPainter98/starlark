@@ -325,14 +325,14 @@ type dummyType struct{ s string }
 type dummyTypeIterator struct{ *dummyType }
 
 var (
-	_ starlark.Value                       = new(dummyType)
-	_ starlark.HasUnaryResultEstimator     = new(dummyType)
-	_ starlark.HasBinaryResultEstimator    = new(dummyType)
-	_ starlark.HasIndexResultSizeEstimator = new(dummyType)
-	_ starlark.HasSetIndexSizeEstimator    = new(dummyType)
-	_ starlark.Iterable                    = new(dummyType)
-	_ starlark.Iterator                    = new(dummyTypeIterator)
-	_ starlark.HasIteratorSizeEstimator    = new(dummyTypeIterator)
+	_ starlark.Value            = new(dummyType)
+	_ starlark.HasSizedUnary    = new(dummyType)
+	_ starlark.HasSizedBinary   = new(dummyType)
+	_ starlark.HasSizedIndex    = new(dummyType)
+	_ starlark.HasSizedSetIndex = new(dummyType)
+	_ starlark.Iterable         = new(dummyType)
+	_ starlark.Iterator         = new(dummyTypeIterator)
+	_ starlark.HasSizedNext     = new(dummyTypeIterator)
 )
 
 func (d *dummyType) String() string       { return string(d.s) }
@@ -345,7 +345,7 @@ func (d *dummyType) Hash() (uint32, error) {
 func (d *dummyType) Unary(op syntax.Token) (starlark.Value, error) {
 	return starlark.String(strings.ToUpper(string(d.s))), nil
 }
-func (d *dummyType) SizeOfUnaryResult(_ syntax.Token) (uintptr, starlark.SizeComputer) {
+func (d *dummyType) UnarySizer(_ syntax.Token) (uintptr, starlark.Sizer) {
 	return 1 + uintptr(len(d.s)), nil
 }
 func (x *dummyType) Binary(_ syntax.Token, y starlark.Value, _ starlark.Side) (starlark.Value, error) {
@@ -354,7 +354,7 @@ func (x *dummyType) Binary(_ syntax.Token, y starlark.Value, _ starlark.Side) (s
 	}
 	return nil, nil
 }
-func (x *dummyType) SizeOfBinaryResult(_ syntax.Token, y starlark.Value, _ starlark.Side) (uintptr, starlark.SizeComputer) {
+func (x *dummyType) BinarySizer(_ syntax.Token, y starlark.Value, _ starlark.Side) (uintptr, starlark.Sizer) {
 	if y, ok := y.(*dummyType); ok {
 		return 2 + uintptr(len(x.s)+len(y.s)), nil
 	}
@@ -366,19 +366,18 @@ func (d *dummyType) Index(_ int) starlark.Value {
 func (d *dummyType) Len() int {
 	return len(d.s)
 }
-func (d *dummyType) IndexSizeIncrease(_ int) (uintptr, starlark.SizeComputer) {
+func (d *dummyType) IndexSizer(_ int) (uintptr, starlark.Sizer) {
 	return 2 + uintptr(len(d.s)), nil
 }
 func (d *dummyType) SetIndex(_ int, v starlark.Value) error {
 	*d = dummyType{d.s[:]}
 	return nil
 }
-func (_ *dummyType) SetIndexSizeIncrease(_ int, _ starlark.Value) (uintptr, starlark.SizeComputer) {
+func (_ *dummyType) SetIndexSizer(_ int, _ starlark.Value) (uintptr, starlark.Sizer) {
 	return 0, func(r interface{}) uintptr {
 		return uintptr(len(r.(*dummyType).s))
 	}
 }
-
 func (dt *dummyType) Iterate() starlark.Iterator {
 	return &dummyTypeIterator{dt}
 }
@@ -388,8 +387,8 @@ func (it *dummyTypeIterator) Next(p *starlark.Value) (true bool) {
 	return
 }
 func (it *dummyTypeIterator) Done() {}
-func (it *dummyTypeIterator) IteratorNextSizeIncrease() (uintptr, starlark.SizeComputer) {
-	return 0, func(v interface{}) uintptr { return uintptr(len(v.(dummyType).s)) }
+func (it *dummyTypeIterator) NextSizer() (uintptr, starlark.Sizer) {
+	return 0, func(v interface{}) uintptr { return uintptr(1 + len(v.(*dummyType).s)) }
 }
 
 func TestUnaryAllocations(t *testing.T) {

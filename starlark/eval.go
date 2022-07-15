@@ -684,13 +684,13 @@ func getIndex(x, y Value) (Value, error) {
 	return nil, fmt.Errorf("unhandled index operation %s[%s]", x.Type(), y.Type())
 }
 
-func getIndexSizeIncrease(x, y Value) (presize uintptr, sizeof SizeComputer) {
+func getIndexSizeIncrease(x, y Value) (presize uintptr, sizeOf Sizer) {
 	switch x := x.(type) {
-	case HasMappingResultSizeEstimator:
-		presize, sizeof = x.GetResultSizeIncrease(y)
-	case HasIndexResultSizeEstimator:
+	case HasGetSizer:
+		presize, sizeOf = x.GetGetSizer(y)
+	case HasSizedIndex:
 		if y, err := AsInt32(y); err == nil {
-			presize, sizeof = x.IndexSizeIncrease(y)
+			presize, sizeOf = x.IndexSizer(y)
 		}
 	}
 	return
@@ -746,13 +746,13 @@ func setIndex(thread *Thread, x, y, z Value) error {
 	return nil
 }
 
-func setIndexSizeIncrease(x, y, z Value) (presize uintptr, sizeOf SizeComputer) {
+func setIndexSizeIncrease(x, y, z Value) (presize uintptr, sizeOf Sizer) {
 	switch x := x.(type) {
-	case HasSetKeySizeEstimator:
-		presize, sizeOf = x.SetKeySizeIncrease(y, z)
-	case HasSetIndexSizeEstimator:
+	case HasSizedSetKey:
+		presize, sizeOf = x.GetSetKeySizer(y, z)
+	case HasSizedSetIndex:
 		if y, err := AsInt32(y); err == nil {
-			presize, sizeOf = x.SetIndexSizeIncrease(y, z)
+			presize, sizeOf = x.SetIndexSizer(y, z)
 		}
 	}
 	return
@@ -1836,27 +1836,27 @@ func SizeUnitsToBytes(units uintptr) uintptr {
 //	return (t.Size() + len*reflect.TypeOf(rune(0)).Size()) / UNIT_SIZE
 //}
 
-type SizeComputer func(v interface{}) uintptr
+type Sizer func(v interface{}) uintptr
 
-func EstimateUnarySizeIncrease(op syntax.Token, x Value) (uintptr, SizeComputer) {
-	if x, ok := x.(HasUnaryResultEstimator); ok {
-		return x.SizeOfUnaryResult(op)
+func EstimateUnarySizeIncrease(op syntax.Token, x Value) (uintptr, Sizer) {
+	if x, ok := x.(HasSizedUnary); ok {
+		return x.UnarySizer(op)
 	}
 	return 1, nil
 }
 
 // If the types of x and y are acceptable to operation op and are defined in the standard library, estimates the maximum size of the result, otherwise, returns zero
-func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) (uintptr, SizeComputer) {
-	if x, ok := x.(HasBinaryResultEstimator); ok {
-		delta, f := x.SizeOfBinaryResult(op, y, Left)
-		if delta != 0 || f != nil {
-			return delta, f
+func EstimateBinarySizeIncrease(op syntax.Token, x Value, y Value) (uintptr, Sizer) {
+	if x, ok := x.(HasSizedBinary); ok {
+		delta, sizeOf := x.BinarySizer(op, y, Left)
+		if delta != 0 || sizeOf != nil {
+			return delta, sizeOf
 		}
 	}
-	if y, ok := y.(HasBinaryResultEstimator); ok {
-		delta, f := y.SizeOfBinaryResult(op, x, Right)
-		if delta != 0 || f != nil {
-			return delta, f
+	if y, ok := y.(HasSizedBinary); ok {
+		delta, sizeOf := y.BinarySizer(op, x, Right)
+		if delta != 0 || sizeOf != nil {
+			return delta, sizeOf
 		}
 	}
 	return 1, nil
