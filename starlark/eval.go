@@ -686,7 +686,7 @@ func getIndex(x, y Value) (Value, error) {
 
 func getIndexSizeIncrease(x, y Value) (presize uintptr, sizeOf Sizer) {
 	switch x := x.(type) {
-	case HasGetSizer:
+	case HasSizedGet:
 		presize, sizeOf = x.GetGetSizer(y)
 	case HasSizedIndex:
 		if y, err := AsInt32(y); err == nil {

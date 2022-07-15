@@ -278,7 +278,7 @@ type Mapping interface {
 	Get(Value) (v Value, found bool, err error)
 }
 
-type HasGetSizer interface {
+type HasSizedGet interface {
 	Mapping
 	GetGetSizer(Value) (uintptr, Sizer)
 }
