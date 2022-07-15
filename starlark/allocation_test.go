@@ -521,7 +521,7 @@ func (it *dummyTypeIterator) NextSizer() (uintptr, starlark.Sizer) {
 	return 0, func(v interface{}) uintptr { return uintptr(1 + len(v.(*dummyType).s)) }
 }
 
-func TestUnaryAllocations(t *testing.T) {
+func TestInterpLoopUnaryAllocations(t *testing.T) {
 	for _, op := range []string{"-", "~"} {
 		genInt := func(n uint) (string, starlark.StringDict) {
 			return fmt.Sprintf("%sa", op), globals("a", dummyInt(n))
@@ -534,7 +534,7 @@ func TestUnaryAllocations(t *testing.T) {
 	}
 }
 
-func TestBinaryAllocations(t *testing.T) {
+func TestInterpLoopBinaryAllocations(t *testing.T) {
 	genIntsWithOp := func(op string) codeGenerator {
 		return func(n uint) (string, starlark.StringDict) {
 			return fmt.Sprintf("a %s b", op), globals("a", dummyInt(n), "b", dummyInt(n/2))
@@ -563,7 +563,7 @@ func TestBinaryAllocations(t *testing.T) {
 	testAllocationsAreConstant(t, "binary", genIntsWithOp("/"), 100, 1000, opIntAllocs["/"])
 }
 
-func TestInplaceBinaryAllocations(t *testing.T) {
+func TestInterpLoopInplaceBinaryAllocations(t *testing.T) {
 	resolve.AllowGlobalReassign = true
 
 	genIntsWithOp := func(op string) codeGenerator {
@@ -595,14 +595,14 @@ func TestInplaceBinaryAllocations(t *testing.T) {
 	testAllocationsAreConstant(t, "binary", genIntsWithOp("/"), 100, 1000, opIntAllocs["/"])
 }
 
-func TestIndexAllocations(t *testing.T) {
+func TestInterpLoopIndexAllocations(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
 		return "d[i]", globals("d", &dummyType{dummyString(n, 'a')}, "i", 1)
 	}
 	testAllocationsIncreaseLinearly(t, "index", gen, 1000, 100000, 1)
 }
 
-func TestSetIndexAllocations(t *testing.T) {
+func TestInterpLoopSetIndexAllocations(t *testing.T) {
 	gen := func(n uint) (string, starlark.StringDict) {
 		return "d[i] = v", globals("d", &dummyType{dummyString(n, 'a')}, "i", 1, "v", -2)
 	}
