@@ -4,6 +4,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/canonical/starlark/internal/compile"
 	"github.com/canonical/starlark/starlark"
 )
 
@@ -284,4 +285,46 @@ func TestAddAllocsCancelledRejection(t *testing.T) {
 	} else if allocs := thread.Allocs(); allocs != 0 {
 		t.Errorf("Changes were recorded against cancelled thread: expected 0 allocations, got %v", allocs)
 	}
+}
+
+type opAllocTest struct {
+	Name               string
+	Ops                []compile.Opcode
+	ExpectedAllocs     uint64
+	Constants, Globals []starlark.Value
+}
+
+func (test opAllocTest) Run(t *testing.T) {
+	if len(test.Ops) == 0 {
+		return
+	}
+
+	thread := &starlark.Thread{}
+
+	// 	if _, err := starlark.ExecOpcodes(thread, test.Ops, test.Globals, test.Constants); err != nil {
+	// 		t.Errorf("%s: unexpected error: %v", test.Name, err)
+	// 	}
+
+	if allocs := thread.Allocs(); allocs != test.ExpectedAllocs {
+		t.Errorf("%s: incorrect number of allocations: expected %d but got %d", test.Name, test.ExpectedAllocs, allocs)
+	}
+}
+
+func TestNOPAllocations(t *testing.T) {
+	opAllocTest{
+		Name: "nop",
+		Ops: []compile.Opcode{
+			compile.NOP,
+			compile.GLOBAL,
+			0x80 | 0, // this line is technically optional
+			0,
+		},
+		ExpectedAllocs: 0,
+		Globals: []starlark.Value{
+			starlark.String("foo"),
+		},
+		// Constants: []starlark.Value{
+		// 	starlark.String("foo"),
+		// },
+	}.Run(t)
 }
