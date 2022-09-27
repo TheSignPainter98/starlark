@@ -749,3 +749,33 @@ func TestAddAllocsCancelledRejection(t *testing.T) {
 		t.Errorf("Changes were recorded against cancelled thread: expected 0 allocations, got %v", allocs)
 	}
 }
+
+func TestAbsAllocs(t *testing.T) {
+	allocTest{
+		name: "abs",
+		gen: func(n uint) (string, env) {
+			return "abs(m)", env{"m": dummyInt(n)}
+		},
+		trend: linear(1),
+	}.Run(t)
+}
+
+func TestAnyAllocs(t *testing.T) {
+	allocTest{
+		name: "any",
+		gen: func(n uint) (string, env) {
+			return "any(l)", env{"l": dummyList(n, false)}
+		},
+		trend: constant(1),
+	}.Run(t)
+}
+
+func TestAllAllocs(t *testing.T) {
+	allocTest{
+		name: "all",
+		gen: func(n uint) (string, env) {
+			return "all(l)", env{"l": dummyList(n, true)}
+		},
+		trend: constant(1),
+	}.Run(t)
+}
