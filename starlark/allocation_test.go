@@ -811,3 +811,38 @@ func TestBytesAllcs(t *testing.T) {
 		trend: linear(1),
 	}.Run(t)
 }
+
+func TestStringStripAllocs(t *testing.T) {
+	paddedString := func(n uint) string {
+		buf := &strings.Builder{}
+		buf.Grow(int(3 * n))
+		buf.WriteString(strings.Repeat(" ", int(n)))
+		buf.WriteString(strings.Repeat("a", int(n)))
+		buf.WriteString(strings.Repeat(" ", int(n)))
+		return buf.String()
+	}
+
+	allocTest{
+		name: "string.strip",
+		gen: func(n uint) (string, env) {
+			return "s.strip()", env{"s": paddedString(n)}
+		},
+		trend: linear(1),
+	}.Run(t)
+
+	allocTest{
+		name: "string.lstrip",
+		gen: func(n uint) (string, env) {
+			return "s.lstrip()", env{"s": paddedString(2 / 3 * n)}
+		},
+		trend: linear(1),
+	}.Run(t)
+
+	allocTest{
+		name: "string.rstrip",
+		gen: func(n uint) (string, env) {
+			return "s.rstrip()", env{"s": paddedString(2 / 3 * n)}
+		},
+		trend: linear(1),
+	}.Run(t)
+}
