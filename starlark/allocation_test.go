@@ -179,6 +179,8 @@ func toStarlarkValue(in interface{}) (starlark.Value, error) {
 		return d, nil
 	case reflect.String:
 		return starlark.String(inVal.String()), nil
+	case reflect.Ptr:
+		return toStarlarkValue(inVal.Elem())
 	default:
 		return nil, fmt.Errorf("Cannot automatically convert a value of kind %v to a starlark.Value: encountered %v", kind, in)
 	}
@@ -190,6 +192,8 @@ func TestToStarlarkValue(t *testing.T) {
 		to   starlark.Value
 	}
 
+	str := "foobar"
+	strPtr := &str
 	value := starlarktime.Duration(time.Nanosecond)
 
 	tests := []conversionTest{
@@ -198,7 +202,9 @@ func TestToStarlarkValue(t *testing.T) {
 		{from: true, to: starlark.Bool(true)},
 		{from: -1, to: starlark.MakeInt(-1)},
 		{from: 'a', to: starlark.String("a")},
-		{from: "bar", to: starlark.String("bar")},
+		{from: str, to: starlark.String(str)},
+		{from: &str, to: starlark.String(str)},
+		{from: &strPtr, to: starlark.String(str)},
 		{from: rune(10), to: starlark.String("\n")},
 		{from: byte(10), to: starlark.MakeInt(10)},
 		{from: int(10), to: starlark.MakeInt(10)},
