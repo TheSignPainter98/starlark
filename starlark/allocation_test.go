@@ -843,6 +843,19 @@ func TestStringStripAllocs(t *testing.T) {
 		gen: func(n uint) (string, env) {
 			return "s.rstrip()", env{"s": paddedString(n)}
 		},
+		trend: linear(2 / 3),
+	}.Run(t)
+}
+
+func TestStringJoinAllocs(t *testing.T) {
+	allocTest{
+		name: "string.join",
+		gen: func(n uint) (string, env) {
+			return "s.join(l)", env{
+				"s": ",",
+				"l": dummyList(n/2, 'a'),
+			}
+		},
 		trend: linear(1),
 	}.Run(t)
 }
