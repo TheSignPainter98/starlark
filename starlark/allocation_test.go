@@ -806,7 +806,7 @@ func TestBytesAllcs(t *testing.T) {
 	allocTest{
 		name: "bytes (iterable)",
 		gen: func(n uint) (string, env) {
-			return "bytes(i)", env{"i": dummyList(n, 321)}
+			return "bytes(i)", env{"i": dummyList(n, 123)}
 		},
 		trend: linear(1),
 	}.Run(t)
