@@ -785,3 +785,29 @@ func TestAllAllocs(t *testing.T) {
 		trend: constant(1),
 	}.Run(t)
 }
+
+func TestBytesAllcs(t *testing.T) {
+	allocTest{
+		name: "bytes (identity op)",
+		gen: func(n uint) (string, env) {
+			return "bytes(b)", env{"b": dummyBytes(n, 'a')}
+		},
+		trend: constant(0),
+	}.Run(t)
+
+	allocTest{
+		name: "bytes (string)",
+		gen: func(n uint) (string, env) {
+			return "bytes(s)", env{"s": dummyString(n, 'a')}
+		},
+		trend: linear(1),
+	}.Run(t)
+
+	allocTest{
+		name: "bytes (iterable)",
+		gen: func(n uint) (string, env) {
+			return "bytes(i)", env{"i": dummyList(n, 321)}
+		},
+		trend: linear(1),
+	}.Run(t)
+}
