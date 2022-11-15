@@ -20,9 +20,10 @@ type TestBase interface {
 }
 
 type S struct {
-	maxAllocs uint64
-	alive     []interface{}
-	N         int
+	maxAllocs  uint64
+	preserving bool
+	alive      []interface{}
+	N          int
 	TestBase
 }
 
@@ -42,6 +43,8 @@ func (test *S) SetMaxAllocs(maxAllocs uint64) {
 
 // RunThread tests a function which has access to a starlark thread and a global environment
 func (test *S) RunThread(fn func(*starlark.Thread)) {
+	test.preserving = false
+
 	thread := &starlark.Thread{}
 
 	memorySum, nSum := test.measureMemory(func() {
@@ -62,7 +65,7 @@ func (test *S) RunThread(fn func(*starlark.Thread)) {
 		test.Errorf("declared allocations are above maximum (%d > %d)", meanDeclared, test.maxAllocs)
 	}
 
-	if test.maxAllocs != math.MaxUint64 {
+	if test.preserving || test.maxAllocs != math.MaxUint64 {
 		if meanMeasured > thread.Allocs() {
 			test.Errorf("measured memory is above declared allocations (%d > %d)", meanMeasured, thread.Allocs())
 		}
@@ -71,6 +74,7 @@ func (test *S) RunThread(fn func(*starlark.Thread)) {
 
 // KeepAlive causes the memory of the passed objects to be measured
 func (test *S) KeepAlive(values ...interface{}) {
+	test.preserving = true
 	test.alive = append(test.alive, values...)
 }
 
