@@ -41,6 +41,8 @@ func (test *S) SetMaxAllocs(maxAllocs uint64) {
 	test.maxAllocs = maxAllocs
 }
 
+func (test *S) Preserving() bool { return test.preserving }
+
 // RunThread tests a function which has access to a starlark thread and a global environment
 func (test *S) RunThread(fn func(*starlark.Thread)) {
 	test.preserving = false

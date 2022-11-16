@@ -65,6 +65,53 @@ func TestKeepAlive(t *testing.T) {
 			t.Error("Expected allocation test failure")
 		}
 	})
+
+	t.Run("check=unbounded", func(t *testing.T) {
+		var memory [][]int32
+		st := startest.From(t)
+		st.RunThread(func(thread *starlark.Thread) {
+			for i := 0; i < st.N; i++ {
+				memory = append(memory, make([]int32, 10))
+				if err := thread.AddAllocs(4); err != nil {
+					t.Errorf("Unexpected error: %v", err)
+					return
+				}
+			}
+		})
+	})
+
+	t.Run("check=reality-only", func(t *testing.T) {
+		dummyT := testing.T{}
+		st := startest.From(&dummyT)
+		st.RunThread(func(thread *starlark.Thread) {
+			for i := 0; i < st.N; i++ {
+				st.KeepAlive(make([]int32, 100))
+				if err := thread.AddAllocs(4); err != nil {
+					st.Errorf("Unexpected error: %v", err)
+					return
+				}
+			}
+		})
+		if !dummyT.Failed() {
+			t.Error("Expected failure")
+		}
+	})
+
+	t.Run("check=caching", func(t *testing.T) {
+		var cache [][]int32
+
+		dummyT := testing.T{}
+		st := startest.From(&dummyT)
+		st.RunThread(func(thread *starlark.Thread) {
+			st.KeepAlive()
+			for i := 0; i < st.N; i++ {
+				cache = append(cache, make([]int32, 10))
+				if err := thread.AddAllocs(1); err != nil {
+					st.Errorf("Unexpected error: %v", err)
+				}
+			}
+		})
+	})
 }
 
 func TestThread(t *testing.T) {
