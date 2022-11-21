@@ -335,6 +335,10 @@ type HasSetField interface {
 	SetField(name string, val Value) error
 }
 
+type Sync interface {
+	BindThread(thread *Thread)
+}
+
 // A NoSuchAttrError may be returned by an implementation of
 // HasAttrs.Attr or HasSetField.SetField to indicate that no such field
 // exists. In that case the runtime may augment the error message to
