@@ -1,6 +1,11 @@
 package starlark_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/canonical/starlark/starlark"
+	"github.com/canonical/starlark/startest"
+)
 
 func TestAbsAllocs(t *testing.T) {
 }
@@ -234,6 +239,24 @@ func TestStringSplitAllocs(t *testing.T) {
 }
 
 func TestStringSplitlinesAllocs(t *testing.T) {
+	string_splitlines, _ := starlark.String("\n\n\n\n").Attr("splitlines")
+
+	if string_splitlines == nil {
+		t.Errorf("No such method: string.splitlines")
+		return
+	}
+
+	st := startest.From(t)
+	st.SetMaxAllocs(96)
+	st.RunThread(func(thread *starlark.Thread) {
+		for i := 0; i < st.N; i++ {
+			result, err := starlark.Call(thread, string_splitlines, nil, nil)
+			if err != nil {
+				st.Error(err)
+			}
+			st.KeepAlive(result)
+		}
+	})
 }
 
 func TestStringStartswithAllocs(t *testing.T) {

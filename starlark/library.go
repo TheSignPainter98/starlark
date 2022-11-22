@@ -21,6 +21,7 @@ import (
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/canonical/starlark/syntax"
 )
@@ -2235,7 +2236,7 @@ func splitspace(s string, max int) []string {
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#string·splitlines
-func string_splitlines(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+func string_splitlines(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	var keepends bool
 	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 0, &keepends); err != nil {
 		return nil, err
@@ -2256,7 +2257,10 @@ func string_splitlines(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 	for i, x := range lines {
 		list[i] = String(x)
 	}
-	return NewList(list), nil
+	return NewList(list), thread.AddAllocs(int64(
+		unsafe.Sizeof([]Value{}) +
+			uintptr(cap(lines))*unsafe.Sizeof(""),
+	))
 }
 
 // https://github.com/google/starlark-go/blob/master/doc/spec.md#set·union.
