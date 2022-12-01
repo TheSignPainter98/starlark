@@ -5,6 +5,7 @@ import (
 
 	"github.com/canonical/starlark/lib/time"
 	"github.com/canonical/starlark/starlark"
+	"github.com/canonical/starlark/startest"
 )
 
 func TestModuleSafeties(t *testing.T) {
@@ -53,6 +54,62 @@ func TestTimeParseDurationAllocs(t *testing.T) {
 }
 
 func TestTimeParseTimeAllocs(t *testing.T) {
+	parse_time, ok := time.Module.Members["parse_time"]
+	if !ok {
+		t.Errorf("No such builtin: parse_time")
+		return
+	}
+
+	t.Run("arg=just-time", func(t *testing.T) {
+		st := startest.From(t)
+		st.SetMaxAllocs(24)
+		st.RunThread(func(thread *starlark.Thread) {
+			for i := 0; i < st.N; i++ {
+				result, err := starlark.Call(thread, parse_time, starlark.Tuple{starlark.String("1970-01-01T00:00:00.00Z")}, nil)
+				if err != nil {
+					st.Error(err)
+				}
+				st.KeepAlive(result)
+			}
+		})
+	})
+
+	t.Run("args=with-format", func(t *testing.T) {
+		st := startest.From(t)
+		st.SetMaxAllocs(24)
+		st.RunThread(func(thread *starlark.Thread) {
+			for i := 0; i < st.N; i++ {
+				args := starlark.Tuple{
+					starlark.String("1970-01-20"),
+					starlark.String("2006-01-02"),
+				}
+				result, err := starlark.Call(thread, parse_time, args, nil)
+				if err != nil {
+					st.Error(err)
+				}
+				st.KeepAlive(result)
+			}
+		})
+	})
+
+	t.Run("args=with-location", func(t *testing.T) {
+		st := startest.From(t)
+		st.SetMaxAllocs(0)
+		st.RunThread(func(thread *starlark.Thread) {
+			for i := 0; i < st.N; i++ {
+				args := starlark.Tuple{
+					starlark.String("1998-07-20"),
+					starlark.String("2006-01-02"),
+					starlark.String("Europe/Prague"),
+				}
+				result, err := starlark.Call(thread, parse_time, args, nil)
+				if err != nil {
+					st.Error(err)
+				}
+				st.KeepAlive(result)
+			}
+		})
+	})
 }
 
 func TestTimeTimeAllocs(t *testing.T) {

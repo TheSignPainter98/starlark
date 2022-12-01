@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"time"
+	"unsafe"
 
 	"github.com/canonical/starlark/starlark"
 	"github.com/canonical/starlark/starlarkstruct"
@@ -72,7 +73,7 @@ var safeties = map[string]starlark.Safety{
 	"is_valid_timezone": starlark.NotSafe,
 	"now":               starlark.NotSafe,
 	"parse_duration":    starlark.NotSafe,
-	"parse_time":        starlark.NotSafe,
+	"parse_time":        starlark.MemSafe,
 	"time":              starlark.NotSafe,
 }
 
@@ -121,9 +122,10 @@ func parseTime(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple
 		if err != nil {
 			return nil, err
 		}
-		return Time(t), nil
+		return Time(t), thread.AddAllocs(int64(unsafe.Sizeof(Time{})))
 	}
 
+	// TODO(kcza): there are many allocs here
 	loc, err := time.LoadLocation(location)
 	if err != nil {
 		return nil, err
@@ -132,7 +134,7 @@ func parseTime(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple
 	if err != nil {
 		return nil, err
 	}
-	return Time(t), nil
+	return Time(t), thread.AddAllocs(int64(unsafe.Sizeof(Time{})))
 }
 
 func fromTimestamp(thread *starlark.Thread, _ *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
