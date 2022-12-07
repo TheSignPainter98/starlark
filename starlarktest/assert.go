@@ -27,13 +27,37 @@ def _true(cond, msg = "assertion failed"):
     if not cond:
         error(msg)
 
+def _false(cont, msg = "assertion failed"):
+	if cond:
+		error(msg)
+
 def _lt(x, y):
     if not (x < y):
         error("%s is not less than %s" % (x, y))
 
+def _le(x, y):
+	if not (x <= y):
+        error("%s is not less than or equal to %s" % (x, y))
+
+def _gt(x, y):
+	if not (x > y):
+        error("%s is not greater than %s" % (x, y))
+
+def _ge(x, y):
+	if not (x >= y):
+        error("%s is not greater than or equal to %s" % (x, y))
+
 def _contains(x, y):
     if y not in x:
         error("%s does not contain %s" % (x, y))
+
+def _type(x, t):
+	if type(x) != t:
+		error("%s is not of type %s" % (x, y))
+
+def _number(x):
+	if type(x) not in [ "int", "float" ]:
+		error("%s is not a number" % x)
 
 def _fails(f, pattern):
     "assert_fails asserts that evaluation of f() fails with the specified error."
@@ -51,8 +75,14 @@ assert = module(
     eq = _eq,
     ne = _ne,
     true = _true,
+    false = _false,
     lt = _lt,
+    le = _le,
+    gt = _gt,
+    ge = _ge,
     contains = _contains,
+    type = _type,
+    number = _number,
     fails = _fails,
 )
 `
