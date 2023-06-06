@@ -145,7 +145,7 @@ loop:
 			y := stack[sp-1]
 			x := stack[sp-2]
 			sp -= 2
-			ok, err2 := Compare(op, x, y)
+			ok, err2 := SafeCompare(thread, op, x, y)
 			if err2 != nil {
 				err = err2
 				break loop

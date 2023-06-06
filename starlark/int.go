@@ -195,6 +195,10 @@ func (x Int) CompareSameType(op syntax.Token, v Value, depth int) (bool, error) 
 	return threeway(op, signum64(xSmall-ySmall)), nil
 }
 
+func (x Int) SafeCompareSameType(_ *Thread, op syntax.Token, v Value, depth int) (bool, error) {
+	return x.CompareSameType(op, v, depth)
+}
+
 // Float returns the float value nearest i.
 func (i Int) Float() Float {
 	iSmall, iBig := i.get()

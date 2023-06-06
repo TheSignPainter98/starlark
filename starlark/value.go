@@ -152,6 +152,22 @@ var (
 	_ Comparable = (*Set)(nil)
 )
 
+type SafeComparable interface {
+	Value
+	SafeCompareSameType(thread *Thread, op syntax.Token, y Value, depth int) (bool, error)
+}
+
+var (
+	_ SafeComparable = Int{}        // TODO: create this implementation
+	_ SafeComparable = False        // TODO: create this implementation
+	_ SafeComparable = Float(0)     // TODO: create this implementation
+	_ SafeComparable = String("")   // TODO: create this implementation
+	_ SafeComparable = (*Dict)(nil) // TODO: create this implementation
+	_ SafeComparable = (*List)(nil) // TODO: create this implementation
+// _ SafeComparable = Tuple(nil)   // TODO: create this implementation
+// _ SafeComparable = (*Set)(nil)  // TODO: create this implementation
+)
+
 // A Callable value f may be the operand of a function call, f(x).
 //
 // Clients should use the Call function, never the CallInternal method.
@@ -399,6 +415,9 @@ func (x Bool) CompareSameType(op syntax.Token, y_ Value, depth int) (bool, error
 	y := y_.(Bool)
 	return threeway(op, b2i(bool(x))-b2i(bool(y))), nil
 }
+func (x Bool) SafeCompareSameType(_ *Thread, op syntax.Token, y_ Value, depth int) (bool, error) {
+	return x.CompareSameType(op, y_, depth)
+}
 
 // Float is the type of a Starlark float.
 type Float float64
@@ -473,6 +492,10 @@ func isFinite(f float64) bool {
 func (x Float) CompareSameType(op syntax.Token, y_ Value, depth int) (bool, error) {
 	y := y_.(Float)
 	return threeway(op, floatCmp(x, y)), nil
+}
+
+func (x Float) SafeCompareSameType(thread *Thread, op syntax.Token, y_ Value, depth int) (bool, error) {
+	return x.CompareSameType(op, y_, depth)
 }
 
 // floatCmp performs a three-valued comparison on floats,
@@ -580,6 +603,19 @@ func (s String) AttrNames() []string             { return builtinAttrNames(strin
 func (x String) CompareSameType(op syntax.Token, y_ Value, depth int) (bool, error) {
 	y := y_.(String)
 	return threeway(op, strings.Compare(string(x), string(y))), nil
+}
+
+func (x String) SafeCompareSameType(thread *Thread, op syntax.Token, y_ Value, depth int) (bool, error) {
+	if thread != nil {
+		worstCaseSteps := x.Len()
+		if yLen := y_.(String).Len(); worstCaseSteps < yLen {
+			worstCaseSteps = yLen
+		}
+		if err := thread.AddExecutionSteps(uint64(worstCaseSteps)); err != nil {
+			return false, err
+		}
+	}
+	return x.CompareSameType(op, y_, depth)
 }
 
 func AsString(x Value) (string, bool) { v, ok := x.(String); return string(v), ok }
@@ -847,17 +883,30 @@ func (x *Dict) CompareSameType(op syntax.Token, y_ Value, depth int) (bool, erro
 	y := y_.(*Dict)
 	switch op {
 	case syntax.EQL:
-		ok, err := dictsEqual(x, y, depth)
+		ok, err := dictsEqual(nil, x, y, depth)
 		return ok, err
 	case syntax.NEQ:
-		ok, err := dictsEqual(x, y, depth)
+		ok, err := dictsEqual(nil, x, y, depth)
 		return !ok, err
 	default:
 		return false, fmt.Errorf("%s %s %s not implemented", x.Type(), op, y.Type())
 	}
 }
 
-func dictsEqual(x, y *Dict, depth int) (bool, error) {
+func (x *Dict) SafeCompareSameType(thread *Thread, op syntax.Token, y_ Value, depth int) (bool, error) {
+	y := y_.(*Dict)
+	switch op {
+	case syntax.EQL:
+		return dictsEqual(thread, x, y, depth)
+	case syntax.NEQ:
+		ok, err := dictsEqual(thread, x, y, depth)
+		return !ok, err
+	default:
+		return false, fmt.Errorf("%s %s %s not implemented", x.Type(), op, y.Type())
+	}
+}
+
+func dictsEqual(thread *Thread, x, y *Dict, depth int) (bool, error) {
 	if x.Len() != y.Len() {
 		return false, nil
 	}
@@ -942,10 +991,15 @@ func (x *List) CompareSameType(op syntax.Token, y_ Value, depth int) (bool, erro
 	y := y_.(*List)
 	// It's tempting to check x == y as an optimization here,
 	// but wrong because a list containing NaN is not equal to itself.
-	return sliceCompare(op, x.elems, y.elems, depth)
+	return sliceCompare(nil, op, x.elems, y.elems, depth)
 }
 
-func sliceCompare(op syntax.Token, x, y []Value, depth int) (bool, error) {
+func (x *List) SafeCompareSameType(thread *Thread, op syntax.Token, y_ Value, depth int) (bool, error) {
+	y := y_.(*List)
+	return sliceCompare(thread, op, x.elems, y.elems, depth)
+}
+
+func sliceCompare(thread *Thread, op syntax.Token, x, y []Value, depth int) (bool, error) {
 	// Fast path: check length.
 	if len(x) != len(y) && (op == syntax.EQL || op == syntax.NEQ) {
 		return op == syntax.NEQ, nil
@@ -953,7 +1007,7 @@ func sliceCompare(op syntax.Token, x, y []Value, depth int) (bool, error) {
 
 	// Find first element that is not equal in both lists.
 	for i := 0; i < len(x) && i < len(y); i++ {
-		if eq, err := EqualDepth(x[i], y[i], depth-1); err != nil {
+		if eq, err := SafeEqualDepth(thread, x[i], y[i], depth-1); err != nil {
 			return false, err
 		} else if !eq {
 			switch op {
@@ -962,7 +1016,7 @@ func sliceCompare(op syntax.Token, x, y []Value, depth int) (bool, error) {
 			case syntax.NEQ:
 				return true, nil
 			default:
-				return CompareDepth(op, x[i], y[i], depth-1)
+				return SafeCompareDepth(thread, op, x[i], y[i], depth-1)
 			}
 		}
 	}
@@ -1415,12 +1469,23 @@ func Equal(x, y Value) (bool, error) {
 	return EqualDepth(x, y, CompareLimit)
 }
 
+func SafeEqual(thread *Thread, x, y Value) (bool, error) {
+	if x, ok := x.(String); ok {
+		return x == y, nil // fast path for an important special case
+	}
+	return SafeEqualDepth(thread, x, y, CompareLimit)
+}
+
 // EqualDepth reports whether two Starlark values are equal.
 //
 // Recursive comparisons by implementations of Value.CompareSameType
 // should use EqualDepth to prevent infinite recursion.
 func EqualDepth(x, y Value, depth int) (bool, error) {
 	return CompareDepth(syntax.EQL, x, y, depth)
+}
+
+func SafeEqualDepth(thread *Thread, x, y Value, depth int) (bool, error) {
+	return SafeCompareDepth(thread, syntax.EQL, x, y, depth)
 }
 
 // Compare compares two Starlark values.
@@ -1434,6 +1499,10 @@ func Compare(op syntax.Token, x, y Value) (bool, error) {
 	return CompareDepth(op, x, y, CompareLimit)
 }
 
+func SafeCompare(thread *Thread, op syntax.Token, x, y Value) (bool, error) {
+	return SafeCompareDepth(thread, op, x, y, CompareLimit)
+}
+
 // CompareDepth compares two Starlark values.
 // The comparison operation must be one of EQL, NEQ, LT, LE, GT, or GE.
 // CompareDepth returns an error if an ordered comparison was
@@ -1442,10 +1511,37 @@ func Compare(op syntax.Token, x, y Value) (bool, error) {
 // The depth parameter limits the maximum depth of recursion
 // in cyclic data structures.
 func CompareDepth(op syntax.Token, x, y Value, depth int) (bool, error) {
+	return compareDepth(nil, op, x, y, depth)
+}
+
+// SafeCompareDepth safely compares two starlark values.
+// The comparison operation must be one of EQL, NEQ, LT, LE, GT, or GE.
+// SafeCompareDepth returns an error if an ordered comparison was
+// requested for a pair of values that do not support it.
+//
+// The depth parameter limits the maximum depth of recursion
+// in cyclic data structures.
+func SafeCompareDepth(thread *Thread, op syntax.Token, x, y Value, depth int) (bool, error) {
+	return compareDepth(thread, op, x, y, depth)
+}
+
+func compareDepth(thread *Thread, op syntax.Token, x, y Value, depth int) (bool, error) {
 	if depth < 1 {
 		return false, fmt.Errorf("comparison exceeded maximum recursion depth")
 	}
 	if sameType(x, y) {
+		if thread != nil {
+			var safety Safety
+			if x, ok := x.(SafetyAware); ok {
+				safety = x.Safety()
+			}
+			if err := thread.CheckPermits(safety); err != nil {
+				return false, err
+			}
+		}
+		if xcomp, ok := x.(SafeComparable); ok {
+			return xcomp.SafeCompareSameType(thread, op, y, depth)
+		}
 		if xcomp, ok := x.(Comparable); ok {
 			return xcomp.CompareSameType(op, y, depth)
 		}

@@ -964,7 +964,7 @@ func minmax(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 			key = res
 		}
 
-		if ok, err := Compare(op, key, extremeKey); err != nil {
+		if ok, err := SafeCompare(thread, op, key, extremeKey); err != nil {
 			return nil, nameErr(b, err)
 		} else if ok {
 			extremum = x
@@ -1277,7 +1277,7 @@ func sorted(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 		}
 	}
 
-	slice := &sortSlice{keys: keys, values: values}
+	slice := &sortSlice{keys: keys, values: values, thread: thread}
 	if reverse {
 		sort.Stable(sort.Reverse(slice))
 	} else {
@@ -1289,6 +1289,7 @@ func sorted(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, erro
 type sortSlice struct {
 	keys   []Value // nil => values[i] is key
 	values []Value
+	thread *Thread
 	err    error
 }
 
@@ -1298,7 +1299,7 @@ func (s *sortSlice) Less(i, j int) bool {
 	if s.keys == nil {
 		keys = s.values
 	}
-	ok, err := Compare(syntax.LT, keys[i], keys[j])
+	ok, err := SafeCompare(s.thread, syntax.LT, keys[i], keys[j])
 	if err != nil {
 		s.err = err
 	}
