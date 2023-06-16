@@ -23,6 +23,7 @@ import (
 	"github.com/canonical/starlark/starlark"
 	"github.com/canonical/starlark/starlarkstruct"
 	"github.com/canonical/starlark/starlarktest"
+	"github.com/canonical/starlark/startest"
 	"github.com/canonical/starlark/syntax"
 )
 
@@ -1248,4 +1249,426 @@ func TestThreadRequireSafetyDoesNotUnsetFlags(t *testing.T) {
 		missing := safety &^ expectedSafety
 		t.Errorf("missing safety flags %v, expected %v", missing.String(), expectedSafety.String())
 	}
+}
+
+type safeBinaryValue struct {
+	safety       starlark.Safety
+	binaryCalled bool
+}
+
+var _ starlark.Value = &safeBinaryValue{}
+var _ starlark.SafeHasBinary = &safeBinaryValue{}
+
+func (v *safeBinaryValue) String() string          { return "safeBinaryValue" }
+func (v *safeBinaryValue) Type() string            { return "safeBinaryValue" }
+func (v *safeBinaryValue) Freeze()                 {}
+func (v *safeBinaryValue) Truth() starlark.Bool    { return starlark.True }
+func (v *safeBinaryValue) Hash() (uint32, error)   { return 0, fmt.Errorf("unhashable: %s", v.Type()) }
+func (v *safeBinaryValue) Safety() starlark.Safety { return v.safety }
+func (v *safeBinaryValue) SafeBinary(*starlark.Thread, syntax.Token, starlark.Value, starlark.Side) (starlark.Value, error) {
+	v.binaryCalled = true
+	return starlark.None, nil
+}
+
+type unsafeBinaryValue struct {
+	binaryCalled bool
+}
+
+var _ starlark.Value = &unsafeBinaryValue{}
+var _ starlark.HasBinary = &unsafeBinaryValue{}
+
+func (v *unsafeBinaryValue) String() string        { return "unsafeBinaryValue" }
+func (v *unsafeBinaryValue) Type() string          { return "unsafeBinaryValue" }
+func (v *unsafeBinaryValue) Freeze()               {}
+func (v *unsafeBinaryValue) Truth() starlark.Bool  { return starlark.True }
+func (v *unsafeBinaryValue) Hash() (uint32, error) { return 0, fmt.Errorf("unhashable: %s", v.Type()) }
+func (v *unsafeBinaryValue) Binary(syntax.Token, starlark.Value, starlark.Side) (starlark.Value, error) {
+	v.binaryCalled = true
+	return starlark.None, nil
+}
+
+func TestSafeBinarySafetyCheck(t *testing.T) {
+	if _, ok := starlark.Value(starlark.None).(starlark.HasBinary); ok {
+		t.Fatalf("test invalid, None implements HasBinary")
+	}
+
+	t.Run("safe and safe", func(t *testing.T) {
+		thread := &starlark.Thread{}
+		thread.RequireSafety(starlark.Safe)
+
+		safe1 := &safeBinaryValue{safety: starlark.Safe}
+		safe2 := &safeBinaryValue{safety: starlark.Safe}
+		if _, err := starlark.SafeBinary(thread, syntax.PLUS, safe1, safe2); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !safe1.binaryCalled {
+			t.Error("left operand not called")
+		}
+		if safe2.binaryCalled {
+			t.Error("unexpected right operand binary used")
+		}
+	})
+
+	t.Run("safe(forbidden) and safe", func(t *testing.T) {
+		thread := &starlark.Thread{}
+		thread.RequireSafety(starlark.Safe)
+
+		forbidden := &safeBinaryValue{safety: starlark.Safe}
+		allowed := &safeBinaryValue{safety: starlark.Safe}
+		if _, err := starlark.SafeBinary(thread, syntax.PLUS, forbidden, allowed); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("safe and safe(forbidden)", func(t *testing.T) {
+		thread := &starlark.Thread{}
+		thread.RequireSafety(starlark.Safe)
+
+		allowed := &safeBinaryValue{safety: starlark.Safe}
+		forbidden := &safeBinaryValue{safety: starlark.Safe}
+		if _, err := starlark.SafeBinary(thread, syntax.PLUS, allowed, forbidden); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}
+
+type binaryTest struct {
+	name   string
+	inputs func(n int) (starlark.Value, syntax.Token, starlark.Value)
+}
+
+func (b binaryTest) Run(t *testing.T) {
+	if b.name == "" {
+		x, op, y := b.inputs(0)
+		t.Fatalf("binary test of %v %v %v missing name field", x.Type(), op, y.Type())
+	}
+	t.Run(b.name, func(t *testing.T) {
+		t.Run("small", func(t *testing.T) {
+			st := startest.From(t)
+			st.SetMaxAllocs(0)
+			st.RunThread(func(thread *starlark.Thread) {
+				x, op, y := b.inputs(10)
+				for i := 0; i < st.N; i++ {
+					result, err := starlark.SafeBinary(thread, op, x, y)
+					if err != nil {
+						st.Error(err)
+					}
+					st.KeepAlive(result)
+				}
+			})
+		})
+		t.Run("large", func(t *testing.T) {
+			st := startest.From(t)
+			st.SetMaxAllocs(0)
+			st.RunThread(func(thread *starlark.Thread) {
+				x, op, y := b.inputs(st.N)
+				result, err := starlark.SafeBinary(thread, op, x, y)
+				if err != nil {
+					st.Error(err)
+				}
+				st.KeepAlive(result)
+			})
+		})
+	})
+}
+
+func TestSafeBinaryAllocs(t *testing.T) {
+	t.Run("+", func(t *testing.T) {
+		binaryTest{
+			name: "string + string",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				x := starlark.String(strings.Repeat("x", n/2))
+				y := starlark.String(strings.Repeat("y", n/2))
+				return x, syntax.PLUS, y
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "int + int",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				return starlark.MakeInt(n / 2), syntax.PLUS, starlark.MakeInt(n / 2)
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "int + float",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				return starlark.MakeInt(n / 2), syntax.PLUS, starlark.MakeInt(n / 2)
+			},
+		}.Run(t)
+	})
+
+	t.Run("-", func(t *testing.T) {
+		binaryTest{
+			name: "int - int",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				return starlark.MakeInt(n / 2), syntax.MINUS, starlark.MakeInt(-n / 2)
+			},
+		}.Run(t)
+		binaryTest{
+			name: "int - float",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				return starlark.MakeInt(n / 2), syntax.MINUS, starlark.Float(-n / 2)
+			},
+		}.Run(t)
+	})
+
+	t.Run("*", func(t *testing.T) {
+		binaryTest{
+			name: "int * int",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				sqrtN := int(math.Sqrt(float64(n)))
+				return starlark.MakeInt(sqrtN), syntax.STAR, starlark.MakeInt(sqrtN)
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "int * float",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				sqrtN := int(math.Sqrt(float64(n)))
+				return starlark.MakeInt(int(sqrtN)), syntax.STAR, starlark.Float(sqrtN)
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "bytes * int",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				return starlark.Bytes("deadbeef"), syntax.STAR, starlark.MakeInt(n)
+			},
+		}.Run(t)
+		binaryTest{
+			name: "int * bytes",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				return starlark.MakeInt(n), syntax.STAR, starlark.Bytes("deadbeef")
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "string * int",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				return starlark.String("deadbeef"), syntax.STAR, starlark.MakeInt(n)
+			},
+		}.Run(t)
+		binaryTest{
+			name: "int * string",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				return starlark.MakeInt(n), syntax.STAR, starlark.String("deadbeef")
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "int * list",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				const len = 10
+				elems := make([]starlark.Value, len)
+				for i := 0; i < len; i++ {
+					elems[i] = starlark.String("a")
+				}
+				return starlark.MakeInt(n), syntax.STAR, starlark.NewList(elems)
+			},
+		}.Run(t)
+		binaryTest{
+			name: "list * int",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				const len = 10
+				elems := make([]starlark.Value, len)
+				for i := 0; i < len; i++ {
+					elems[i] = starlark.String("a")
+				}
+				return starlark.NewList(elems), syntax.STAR, starlark.MakeInt(n)
+			},
+		}.Run(t)
+	})
+
+	t.Run("%", func(t *testing.T) {
+		// "string % mapping"
+		// "string % iterable"
+	})
+
+	t.Run("in", func(t *testing.T) {
+		binaryTest{
+			name: "string in string",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				return starlark.String("a"), syntax.IN, starlark.String(strings.Repeat("a", n))
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "string in bytes",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				return starlark.String("a"), syntax.IN, starlark.String(strings.Repeat("a", n))
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "string in list",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				elems := make([]starlark.Value, n)
+				for i := 0; i < n; i++ {
+					elems[i] = starlark.String("a")
+				}
+				return starlark.String("a"), syntax.IN, starlark.NewList(elems)
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "string in dict",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				elems := make([]starlark.Value, n)
+				for i := 0; i < n; i++ {
+					elems[i] = starlark.String("a")
+				}
+				return starlark.String("a"), syntax.IN, starlark.NewList(elems)
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "string in set",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				elems := make([]starlark.Value, n)
+				for i := 0; i < n; i++ {
+					elems[i] = starlark.String("a")
+				}
+				return starlark.String("a"), syntax.IN, starlark.NewList(elems)
+			},
+		}.Run(t)
+	})
+
+	t.Run("not in", func(t *testing.T) {
+		binaryTest{
+			name: "string not in string",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				return starlark.String("a"), syntax.NOT_IN, starlark.String(strings.Repeat("a", n))
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "string not in bytes",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				return starlark.String("a"), syntax.NOT_IN, starlark.String(strings.Repeat("a", n))
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "string not in list",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				elems := make([]starlark.Value, n)
+				for i := 0; i < n; i++ {
+					elems[i] = starlark.String("a")
+				}
+				return starlark.String("a"), syntax.NOT_IN, starlark.NewList(elems)
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "string not in dict",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				elems := make([]starlark.Value, n)
+				for i := 0; i < n; i++ {
+					elems[i] = starlark.String("a")
+				}
+				return starlark.String("a"), syntax.NOT_IN, starlark.NewList(elems)
+			},
+		}.Run(t)
+
+		binaryTest{
+			name: "string not in set",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				elems := make([]starlark.Value, n)
+				for i := 0; i < n; i++ {
+					elems[i] = starlark.String("a")
+				}
+				return starlark.String("a"), syntax.NOT_IN, starlark.NewList(elems)
+			},
+		}.Run(t)
+	})
+
+	t.Run("int", func(t *testing.T) {
+		t.Run("+", func(t *testing.T) {
+			t.Run("int", func(t *testing.T) {
+			})
+			t.Run("float", func(t *testing.T) {
+			})
+		})
+		t.Run("-", func(t *testing.T) {
+			t.Run("int", func(t *testing.T) {
+			})
+			t.Run("float", func(t *testing.T) {
+			})
+		})
+		t.Run("*", func(t *testing.T) {
+			t.Run("int", func(t *testing.T) {
+			})
+			t.Run("float", func(t *testing.T) {
+			})
+			t.Run("bytes", func(t *testing.T) {
+			})
+			t.Run("string", func(t *testing.T) {
+			})
+			t.Run("list", func(t *testing.T) {
+			})
+			t.Run("tuple", func(t *testing.T) {})
+		})
+		t.Run("/", func(t *testing.T) {
+			t.Run("int", func(t *testing.T) {})
+			t.Run("float", func(t *testing.T) {})
+		})
+		t.Run("//", func(t *testing.T) {
+			t.Run("int", func(t *testing.T) {})
+			t.Run("float", func(t *testing.T) {})
+		})
+		t.Run("%", func(t *testing.T) {
+			t.Run("int", func(t *testing.T) {})
+			t.Run("float", func(t *testing.T) {})
+		})
+		t.Run("in", func(t *testing.T) {
+			t.Run("list", func(t *testing.T) {})
+			t.Run("bytes", func(t *testing.T) {})
+			t.Run("range", func(t *testing.T) {})
+		})
+	})
+
+	t.Run("float", func(t *testing.T) {
+		t.Run("+", func(t *testing.T) {
+			t.Run("int", func(t *testing.T) {})
+			t.Run("float", func(t *testing.T) {})
+		})
+		t.Run("-", func(t *testing.T) {
+			t.Run("int", func(t *testing.T) {})
+			t.Run("float", func(t *testing.T) {})
+		})
+		t.Run("*", func(t *testing.T) {
+			t.Run("int", func(t *testing.T) {})
+			t.Run("float", func(t *testing.T) {})
+		})
+		t.Run("/", func(t *testing.T) {
+			t.Run("int", func(t *testing.T) {})
+			t.Run("float", func(t *testing.T) {})
+		})
+		t.Run("//", func(t *testing.T) {
+			t.Run("int", func(t *testing.T) {})
+			t.Run("float", func(t *testing.T) {})
+		})
+		t.Run("%", func(t *testing.T) {
+			t.Run("int", func(t *testing.T) {})
+			t.Run("float", func(t *testing.T) {})
+		})
+	})
+
+	t.Run("list", func(t *testing.T) {
+		t.Run("+", func(t *testing.T) {
+			t.Run("list", func(t *testing.T) {})
+		})
+		t.Run("*", func(t *testing.T) {
+			t.Run("int", func(t *testing.T) {})
+		})
+	})
+
+	t.Run("tuple", func(t *testing.T) {
+		t.Run("+", func(t *testing.T) {
+			t.Run("tuple", func(t *testing.T) {})
+		})
+	})
+
+	t.Run("custom", func(t *testing.T) {})
 }
