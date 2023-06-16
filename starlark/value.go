@@ -309,6 +309,12 @@ type HasBinary interface {
 	Binary(op syntax.Token, y Value, side Side) (Value, error)
 }
 
+type SafeHasBinary interface {
+	Value
+	SafetyAware
+	SafeBinary(thread *Thread, op syntax.Token, y Value, side Side) (Value, error)
+}
+
 type Side bool
 
 const (
@@ -1609,6 +1615,8 @@ func SafeIterate(thread *Thread, x Value) (Iterator, error) {
 // UTF-8-to-UTF-k transcoding. Because k=8 for Go, these operations
 // are the identity function, at least for valid encodings of text.
 type Bytes string
+
+var BytesTypeOverhead = EstimateSize(Bytes(""))
 
 var (
 	_ Comparable = Bytes("")
