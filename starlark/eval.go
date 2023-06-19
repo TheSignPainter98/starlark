@@ -953,7 +953,6 @@ func safeBinary(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 		case Int:
 			switch y := y.(type) {
 			case Int:
-				// TODO: estimate size
 				return x.Add(y), nil
 			case Float:
 				xf, err := x.finiteFloat()
@@ -1519,6 +1518,27 @@ func safeBinary(thread *Thread, op syntax.Token, x, y Value) (Value, error) {
 	// unsupported operand types
 unknown:
 	return nil, fmt.Errorf("unknown binary op: %s %s %s", x.Type(), op, y.Type())
+}
+
+func predictRepeatingSafeBinaryAllocs(n Int, v Value) (delta int64, ok bool) {
+	n2, err := AsInt32(n)
+	if err != nil || n2 > maxAlloc {
+		return 0, false // too large n will be rejected
+	}
+
+	if v, ok := v.(String); ok {
+		return BytesTypeOverhead + EstimateMakeSize([]byte{}, n2*v.Len()), true
+	}
+	if v, ok := v.(Bytes); ok {
+		return BytesTypeOverhead + EstimateMakeSize([]byte{}, n2*v.Len()), true
+	}
+	if v, ok := v.(*List); ok {
+		return EstimateSize(&List{}) + EstimateMakeSize([]Value{}, n2*v.Len()), true
+	}
+	if v, ok := v.(Tuple); ok {
+		return EstimateSize(Tuple{}) + EstimateMakeSize([]Value{}, n2*v.Len()), true
+	}
+	return 0, false
 }
 
 // It's always possible to overeat in small bites but we'll
