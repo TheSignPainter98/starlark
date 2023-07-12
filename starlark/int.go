@@ -10,6 +10,7 @@ import (
 	"math/big"
 	"reflect"
 	"strconv"
+	"unsafe"
 
 	"github.com/canonical/starlark/syntax"
 )
@@ -150,6 +151,16 @@ func bigintToUint64(i *big.Int) (uint64, big.Accuracy) {
 		return 0, big.Above
 	}
 	return i.Uint64(), big.Exact
+}
+
+var minIntBits = int(unsafe.Sizeof(uintptr(0))) * 8
+
+func (i Int) BitLen() int {
+	_, iBig := i.get()
+	if iBig != nil {
+		return iBig.BitLen()
+	}
+	return minIntBits
 }
 
 var (
