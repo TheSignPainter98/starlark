@@ -1653,6 +1653,4 @@ func TestSafeBinaryAllocs(t *testing.T) {
 			test.Run(t)
 		}
 	})
-
-	t.Run("custom", func(t *testing.T) {})
 }
