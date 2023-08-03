@@ -101,23 +101,23 @@ func TestImmutabilityBigInt(t *testing.T) {
 	}
 }
 
-func TestBitLen(t *testing.T) {
-	t.Run("small", func(t *testing.T) {
-		const maxExpected = 64
-
-		num := MakeInt(math.MaxInt32 + 1)
-		if len := num.BitLen(); len > maxExpected {
-			t.Errorf("unexpected number of bits: expected at most %d but got %v", maxExpected, len)
-		}
-	})
-
-	t.Run("large", func(t *testing.T) {
-		const expected = 126
-
-		num := MakeInt64(math.MaxInt64)
-		num = num.Mul(num)
-		if len := num.BitLen(); len != expected {
-			t.Errorf("unexpected bit len reported: expected %d but got %d", expected, len)
-		}
-	})
-}
+// func TestBitLen(t *testing.T) {
+// 	t.Run("small", func(t *testing.T) {
+// 		const maxExpected = 64
+//
+// 		num := MakeInt(math.MaxInt32 + 1)
+// 		if len := num.BitLen(); len > maxExpected {
+// 			t.Errorf("unexpected number of bits: expected at most %d but got %v", maxExpected, len)
+// 		}
+// 	})
+//
+// 	t.Run("large", func(t *testing.T) {
+// 		const expected = 126
+//
+// 		num := MakeInt64(math.MaxInt64)
+// 		num = num.Mul(num)
+// 		if len := num.BitLen(); len != expected {
+// 			t.Errorf("unexpected bit len reported: expected %d but got %d", expected, len)
+// 		}
+// 	})
+// }

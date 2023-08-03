@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"fmt"
 	"math"
-	"math/big"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -1334,18 +1333,39 @@ func TestSafeBinarySafetyCheck(t *testing.T) {
 }
 
 type binaryTest struct {
-	name   string
-	inputs func(n int) (starlark.Value, syntax.Token, starlark.Value)
+	name           string
+	inputs         func(n int) (starlark.Value, syntax.Token, starlark.Value)
+	assertNoAllocs bool
 }
 
 func (b binaryTest) Run(t *testing.T) {
-	if b.name == "" {
-		x, op, y := b.inputs(0)
-		t.Fatalf("binary test of %v %v %v missing name field", x.Type(), op, y.Type())
-	}
 	t.Run(b.name, func(t *testing.T) {
+		if b.inputs == nil {
+			t.Fatalf("binary test '%v' missing inputs field", b.name)
+		}
+		if b.name == "" {
+			x, op, y := b.inputs(0)
+			t.Fatalf("binary test of %v %v %v has empty name field", x.Type(), op, y.Type())
+		}
+
+		t.Run("nil-thread safety", func(t *testing.T) {
+			defer func() {
+				if err := recover(); err != nil {
+					t.Errorf("unexpected panic: %v", err)
+				}
+			}()
+			x, op, y := b.inputs(10)
+			_, err := starlark.SafeBinary(nil, op, x, y)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+
 		t.Run("small", func(t *testing.T) {
 			st := startest.From(t)
+			if b.assertNoAllocs {
+				st.SetMaxAllocs(0)
+			}
 			st.RunThread(func(thread *starlark.Thread) {
 				x, op, y := b.inputs(10)
 				for i := 0; i < st.N; i++ {
@@ -1357,8 +1377,12 @@ func (b binaryTest) Run(t *testing.T) {
 				}
 			})
 		})
+
 		t.Run("large", func(t *testing.T) {
 			st := startest.From(t)
+			if b.assertNoAllocs {
+				st.SetMaxAllocs(0)
+			}
 			st.RunThread(func(thread *starlark.Thread) {
 				x, op, y := b.inputs(st.N)
 				result, err := starlark.SafeBinary(thread, op, x, y)
@@ -1376,46 +1400,63 @@ func TestSafeBinaryAllocs(t *testing.T) {
 		tests := []binaryTest{{
 			name: "string + string",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				x := starlark.String(strings.Repeat("x", n/2))
-				y := starlark.String(strings.Repeat("y", n/2))
-				return x, syntax.PLUS, y
+				l := starlark.String(strings.Repeat("x", n/2))
+				r := starlark.String(strings.Repeat("y", n/2))
+				return l, syntax.PLUS, r
 			},
 		}, {
 			name: "int + int",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.MakeInt(n / 2), syntax.PLUS, starlark.MakeInt(n / 2)
+				shift := n - 1
+				if shift < 0 {
+					shift = 0
+				}
+				num := starlark.MakeInt(1).Lsh(uint(shift))
+				return num, syntax.PLUS, num
 			},
 		}, {
 			name: "int + float",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.MakeInt(n), syntax.PLUS, starlark.Float(1024)
+				l := starlark.MakeInt(1).Lsh(308)
+				r := starlark.Float(n)
+				return l, syntax.PLUS, r
+			},
+		}, {
+			name: "float + int",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.Float(n)
+				r := starlark.MakeInt(1).Lsh(308)
+				return l, syntax.PLUS, r
 			},
 		}, {
 			name: "float + float",
-			inputs: func(_ int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.Float(1024), syntax.PLUS, starlark.Float(1024)
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				num := starlark.Float(n)
+				return num, syntax.PLUS, num
 			},
 		}, {
 			name: "list + list",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				l1 := make([]starlark.Value, n/2)
-				l2 := make([]starlark.Value, n/2)
+				lElems := make([]starlark.Value, n/2)
+				rElems := make([]starlark.Value, n/2)
 				for i := 0; i < n/2; i++ {
-					l1[i] = starlark.String("a")
-					l2[i] = starlark.String("b")
+					lElems[i] = starlark.String("a")
+					rElems[i] = starlark.String("b")
 				}
-				return starlark.NewList(l1), syntax.PLUS, starlark.NewList(l2)
+				l := starlark.NewList(lElems)
+				r := starlark.NewList(rElems)
+				return l, syntax.PLUS, r
 			},
 		}, {
 			name: "tuple + tuple",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				t1 := make(starlark.Tuple, n/2)
-				t2 := make(starlark.Tuple, n/2)
+				l := make(starlark.Tuple, n/2)
+				r := make(starlark.Tuple, n/2)
 				for i := 0; i < n/2; i++ {
-					t1[i] = starlark.String("a")
-					t2[i] = starlark.String("b")
+					l[i] = starlark.String("a")
+					r[i] = starlark.String("b")
 				}
-				return t1, syntax.PLUS, t2
+				return l, syntax.PLUS, r
 			},
 		}}
 		for _, test := range tests {
@@ -1427,22 +1468,34 @@ func TestSafeBinaryAllocs(t *testing.T) {
 		tests := []binaryTest{{
 			name: "int - int",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.MakeInt(n / 2), syntax.MINUS, starlark.MakeInt(-n / 2)
+				shift := n - 1
+				if shift < 0 {
+					shift = 0
+				}
+				l := starlark.MakeInt(1).Lsh(uint(shift))
+				r := starlark.MakeInt(-1).Lsh(uint(shift))
+				return l, syntax.MINUS, r
 			},
 		}, {
 			name: "int - float",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.MakeInt(n / 2), syntax.MINUS, starlark.Float(-n / 2)
+				l := starlark.MakeInt(1).Lsh(308)
+				r := starlark.Float(-n)
+				return l, syntax.MINUS, r
 			},
 		}, {
 			name: "float - int",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.Float(-n / 2), syntax.MINUS, starlark.MakeInt(n / 2)
+				l := starlark.Float(n)
+				r := starlark.MakeInt(-1).Lsh(308)
+				return l, syntax.MINUS, r
 			},
 		}, {
 			name: "float - float",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.Float(n / 2), syntax.MINUS, starlark.Float(-n / 2)
+				l := starlark.Float(n)
+				r := starlark.Float(-n)
+				return l, syntax.MINUS, r
 			},
 		}}
 		for _, test := range tests {
@@ -1454,66 +1507,86 @@ func TestSafeBinaryAllocs(t *testing.T) {
 		tests := []binaryTest{{
 			name: "int * int",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				sqrtN := int(math.Sqrt(float64(n)))
-				return starlark.MakeInt(sqrtN), syntax.STAR, starlark.MakeInt(sqrtN)
+				num := starlark.MakeInt(int(math.Sqrt(float64(n))))
+				return num, syntax.STAR, num
 			},
 		}, {
 			name: "int * float",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				sqrtN := int(math.Sqrt(float64(n)))
-				return starlark.MakeInt(int(sqrtN)), syntax.STAR, starlark.Float(sqrtN)
+				sqrtN := math.Sqrt(float64(n))
+				l := starlark.MakeInt(int(sqrtN))
+				r := starlark.Float(sqrtN)
+				return l, syntax.STAR, r
 			},
 		}, {
 			name: "float * int",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				sqrtN := int(math.Sqrt(float64(n)))
-				return starlark.Float(sqrtN), syntax.STAR, starlark.MakeInt(int(sqrtN))
+				sqrtN := math.Sqrt(float64(n))
+				l := starlark.Float(sqrtN)
+				r := starlark.MakeInt(int(sqrtN))
+				return l, syntax.STAR, r
 			},
 		}, {
-			name: "flaot * float",
+			name: "float * float",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				sqrtN := int(math.Sqrt(float64(n)))
-				return starlark.MakeInt(int(sqrtN)), syntax.STAR, starlark.Float(sqrtN)
+				num := starlark.Float(math.Sqrt(float64(n)))
+				return num, syntax.STAR, num
 			},
 		}, {
 			name: "bytes * int",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.Bytes("deadbeef"), syntax.STAR, starlark.MakeInt(n)
+				sqrtN := int(math.Sqrt(float64(n)))
+				l := starlark.Bytes(strings.Repeat("deadbeef", sqrtN))
+				r := starlark.MakeInt(sqrtN)
+				return l, syntax.STAR, r
 			},
 		}, {
 			name: "int * bytes",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.MakeInt(n), syntax.STAR, starlark.Bytes("deadbeef")
+				sqrtN := int(math.Sqrt(float64(n)))
+				l := starlark.MakeInt(sqrtN)
+				r := starlark.Bytes(strings.Repeat("deadbeef", sqrtN))
+				return l, syntax.STAR, r
 			},
 		}, {
 			name: "string * int",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.String("deadbeef"), syntax.STAR, starlark.MakeInt(n)
+				sqrtN := int(math.Sqrt(float64(n)))
+				l := starlark.String(strings.Repeat("deadbeef", sqrtN))
+				r := starlark.MakeInt(sqrtN)
+				return l, syntax.STAR, r
 			},
 		}, {
 			name: "int * string",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.MakeInt(n), syntax.STAR, starlark.String("deadbeef")
+				sqrtN := int(math.Sqrt(float64(n)))
+				l := starlark.MakeInt(sqrtN)
+				r := starlark.String(strings.Repeat("deadbeef", sqrtN))
+				return l, syntax.STAR, r
 			},
 		}, {
 			name: "int * list",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				const len = 10
-				elems := make([]starlark.Value, len)
-				for i := 0; i < len; i++ {
-					elems[i] = starlark.String("a")
+				sqrtN := int(math.Sqrt(float64(n)))
+				l := starlark.MakeInt(sqrtN)
+				rElems := make([]starlark.Value, sqrtN)
+				for i := 0; i < len(rElems); i++ {
+					rElems[i] = starlark.String("a")
 				}
-				return starlark.MakeInt(n), syntax.STAR, starlark.NewList(elems)
+				r := starlark.NewList(rElems)
+				return l, syntax.STAR, r
 			},
 		}, {
 			name: "list * int",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				const len = 10
-				elems := make([]starlark.Value, len)
-				for i := 0; i < len; i++ {
-					elems[i] = starlark.String("a")
+				sqrtN := int(math.Sqrt(float64(n)))
+				lElems := make([]starlark.Value, sqrtN)
+				for i := 0; i < len(lElems); i++ {
+					lElems[i] = starlark.String("a")
 				}
-				return starlark.NewList(elems), syntax.STAR, starlark.MakeInt(n)
+				l := starlark.NewList(lElems)
+				r := starlark.MakeInt(sqrtN)
+				return l, syntax.STAR, r
 			},
 		}}
 		for _, test := range tests {
@@ -1521,136 +1594,223 @@ func TestSafeBinaryAllocs(t *testing.T) {
 		}
 	})
 
-	divTest := func(t *testing.T, op string, token syntax.Token) {
+	t.Run("/", func(t *testing.T) {
 		tests := []binaryTest{{
-			name: fmt.Sprintf("int %s int", op),
+			name: "int / int",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				l := new(big.Int).Lsh(big.NewInt(1), uint(n*2))
-				r := new(big.Int).Lsh(big.NewInt(1), uint(n))
-				return starlark.MakeBigInt(l), token, starlark.MakeBigInt(r)
+				l := starlark.MakeInt(n * n)
+				r := starlark.MakeInt(n)
+				return l, syntax.SLASH, r
 			},
 		}, {
-			name: fmt.Sprintf("int %s float", op),
+			name: "int / float",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				i := new(big.Int).Lsh(big.NewInt(1), uint(n+10))
-				return starlark.MakeBigInt(i), token, starlark.Float(1024)
+				l := starlark.MakeInt(100)
+				r := starlark.Float(n * 100)
+				return l, syntax.SLASH, r
 			},
 		}, {
-			name: fmt.Sprintf("float %s int", op),
+			name: "float / int",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				i := new(big.Int).Lsh(big.NewInt(1), uint(n+10))
-				return starlark.Float(1024), token, starlark.MakeBigInt(i)
+				l := starlark.Float(n * 100)
+				r := starlark.MakeInt(100)
+				return l, syntax.SLASH, r
 			},
 		}, {
-			name: fmt.Sprintf("float %s float", op),
+			name: "float / float",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.Float(1024), token, starlark.Float(1024)
+				l := starlark.Float(1)
+				r := starlark.Float(1 / float64(n))
+				return l, syntax.SLASH, r
+			},
+		}}
+		for _, test := range tests {
+			test.Run(t)
+		}
+	})
+
+	t.Run("//", func(t *testing.T) {
+		tests := []binaryTest{{
+			name: "int // int",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.MakeInt(1).Lsh(uint(n * 2))
+				r := starlark.MakeInt(1).Lsh(uint(n))
+				return l, syntax.SLASHSLASH, r
+			},
+		}, {
+			name: "int // float",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.MakeInt(100)
+				r := starlark.Float(n)
+				return l, syntax.SLASHSLASH, r
+			},
+		}, {
+			name: "float // int",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.Float(n)
+				r := starlark.MakeInt(100)
+				return l, syntax.SLASHSLASH, r
+			},
+		}, {
+			name: "float // float",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.Float(1)
+				r := starlark.Float(1 / float64(n))
+				return l, syntax.SLASHSLASH, r
+			},
+		}}
+		for _, test := range tests {
+			test.Run(t)
+		}
+	})
+
+	t.Run("%", func(t *testing.T) {
+		tests := []binaryTest{{
+			name: "int % int",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.MakeInt(1).Lsh(uint(n * 2))
+				r := starlark.MakeInt(1).Lsh(uint(n))
+				return l, syntax.PERCENT, r
+			},
+		}, {
+			name: "int % float",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.MakeInt(1).Lsh(308)
+				r := starlark.Float(n)
+				return l, syntax.PERCENT, r
+			},
+		}, {
+			name: "float % int",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.Float(1e15)
+				r := starlark.MakeInt(n)
+				return l, syntax.PERCENT, r
+			},
+		}, {
+			name: "float % float",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.Float(n * n)
+				r := starlark.Float(n)
+				return l, syntax.PERCENT, r
+			},
+		}, {
+			name: "string % int",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.String("(%d)")
+				r := starlark.MakeInt(1).Lsh(uint(n))
+				return l, syntax.PERCENT, r
+			},
+		}, {
+			name: "string % string",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				lBuilder := &strings.Builder{}
+				for i := 0; i < n/2; i++ {
+					lBuilder.WriteString("%%")
+				}
+				lBuilder.WriteString("%s")
+				for i := 0; i < n/2; i++ {
+					lBuilder.WriteString("%%")
+				}
+				l := starlark.String(lBuilder.String())
+				r := starlark.String(strings.Repeat("%", n/2))
+				return l, syntax.PERCENT, r
+			},
+		}, {
+			name: "string % mapping",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				sqrtN := int(math.Sqrt(float64(n)))
+				l := starlark.String(strings.Repeat("%(foo)s", sqrtN))
+				r := starlark.NewDict(1)
+				r.SetKey(starlark.String("foo"), starlark.String(strings.Repeat("a", sqrtN)))
+				return l, syntax.PERCENT, r
+			},
+		}, {
+			name: "string % tuple",
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.String(strings.Repeat("%s", n/2))
+				r := make(starlark.Tuple, 0, n/2)
+				for i := 0; i < n/2; i++ {
+					r = append(r, starlark.String("a"))
+				}
+				return l, syntax.PERCENT, r
+			},
+		}}
+		for _, test := range tests {
+			test.Run(t)
+		}
+	})
+
+	testContainmentBinary := func(t *testing.T, op string, token syntax.Token) {
+		tests := []binaryTest{{
+			name:           fmt.Sprintf("bytes %s bytes", op),
+			assertNoAllocs: true,
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.Bytes("b")
+				r := starlark.Bytes(strings.Repeat("a", n) + "b")
+				return l, token, r
+			},
+		}, {
+			name:           fmt.Sprintf("int %s bytes", op),
+			assertNoAllocs: true,
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.MakeInt(int('b'))
+				r := starlark.Bytes(strings.Repeat("a", n) + "b")
+				return l, token, r
+			},
+		}, {
+			name:           fmt.Sprintf("string %s string", op),
+			assertNoAllocs: true,
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.String("a")
+				r := starlark.String(strings.Repeat("a", n))
+				return l, token, r
+			},
+		}, {
+			name:           fmt.Sprintf("string %s list", op),
+			assertNoAllocs: true,
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.String("a")
+				rElems := make([]starlark.Value, 0, n)
+				for i := 0; i < n; i++ {
+					rElems = append(rElems, starlark.MakeInt(n))
+				}
+				rElems = append(rElems, l)
+				r := starlark.NewList(rElems)
+				return l, token, r
+			},
+		}, {
+			name:           fmt.Sprintf("string %s dict", op),
+			assertNoAllocs: true,
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.String("a")
+				r := starlark.NewDict(n)
+				for i := 0; i < n; i++ {
+					r.SetKey(starlark.MakeInt(n), starlark.True)
+				}
+				r.SetKey(l, starlark.True)
+				return l, token, r
+			},
+		}, {
+			name:           fmt.Sprintf("string %s set", op),
+			assertNoAllocs: true,
+			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
+				l := starlark.String("a")
+				r := starlark.NewSet(n)
+				for i := 0; i < n; i++ {
+					r.Insert(starlark.MakeInt(n))
+				}
+				r.Insert(l)
+				return l, token, r
 			},
 		}}
 		for _, test := range tests {
 			test.Run(t)
 		}
 	}
-
-	t.Run("/", func(t *testing.T) {
-		divTest(t, "/", syntax.SLASH)
-	})
-
-	t.Run("//", func(t *testing.T) {
-		divTest(t, "//", syntax.SLASHSLASH)
-	})
-
-	t.Run("%", func(t *testing.T) {
-		divTest(t, "%", syntax.PERCENT)
-		// TODO(kcza): "string % mapping"
-		// TODO(kcza): "string % iterable"
-	})
-
 	t.Run("in", func(t *testing.T) {
-		tests := []binaryTest{{
-			name: "string in string",
-			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.String("a"), syntax.IN, starlark.String(strings.Repeat("a", n))
-			},
-		}, {
-			name: "string in bytes",
-			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.String("a"), syntax.IN, starlark.Bytes(strings.Repeat("a", n))
-			},
-		}, {
-			name: "string in list",
-			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				elems := make([]starlark.Value, n)
-				for i := 0; i < n; i++ {
-					elems[i] = starlark.String("a")
-				}
-				return starlark.String("a"), syntax.IN, starlark.NewList(elems)
-			},
-		}, {
-			name: "string in dict",
-			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				elems := make([]starlark.Value, n)
-				for i := 0; i < n; i++ {
-					elems[i] = starlark.String("a")
-				}
-				return starlark.String("a"), syntax.IN, starlark.NewList(elems)
-			},
-		}, {
-			name: "string in set",
-			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				elems := make([]starlark.Value, n)
-				for i := 0; i < n; i++ {
-					elems[i] = starlark.String("a")
-				}
-				return starlark.String("a"), syntax.IN, starlark.NewList(elems)
-			},
-		}}
-		for _, test := range tests {
-			test.Run(t)
-		}
+		testContainmentBinary(t, "in", syntax.IN)
 	})
-
 	t.Run("not in", func(t *testing.T) {
-		tests := []binaryTest{{
-			name: "string not in string",
-			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.String("a"), syntax.NOT_IN, starlark.String(strings.Repeat("a", n))
-			},
-		}, {
-			name: "string not in bytes",
-			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				return starlark.String("a"), syntax.NOT_IN, starlark.Bytes(strings.Repeat("a", n))
-			},
-		}, {
-			name: "string not in list",
-			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				elems := make([]starlark.Value, n)
-				for i := 0; i < n; i++ {
-					elems[i] = starlark.String("a")
-				}
-				return starlark.String("a"), syntax.NOT_IN, starlark.NewList(elems)
-			},
-		}, {
-			name: "string not in dict",
-			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				elems := make([]starlark.Value, n)
-				for i := 0; i < n; i++ {
-					elems[i] = starlark.String("a")
-				}
-				return starlark.String("a"), syntax.NOT_IN, starlark.NewList(elems)
-			},
-		}, {
-			name: "string not in set",
-			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				elems := make([]starlark.Value, n)
-				for i := 0; i < n; i++ {
-					elems[i] = starlark.String("a")
-				}
-				return starlark.String("a"), syntax.NOT_IN, starlark.NewList(elems)
-			},
-		}}
-		for _, test := range tests {
-			test.Run(t)
-		}
+		testContainmentBinary(t, "not in", syntax.NOT_IN)
 	})
 }
