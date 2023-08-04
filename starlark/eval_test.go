@@ -1400,9 +1400,8 @@ func TestSafeBinaryAllocs(t *testing.T) {
 		tests := []binaryTest{{
 			name: "string + string",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
-				l := starlark.String(strings.Repeat("x", n/2))
-				r := starlark.String(strings.Repeat("y", n/2))
-				return l, syntax.PLUS, r
+				str := starlark.String(strings.Repeat("x", n/2))
+				return str, syntax.PLUS, str
 			},
 		}, {
 			name: "int + int",
@@ -1704,11 +1703,11 @@ func TestSafeBinaryAllocs(t *testing.T) {
 			name: "string % string",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
 				lBuilder := &strings.Builder{}
-				for i := 0; i < n/2; i++ {
+				for i := 0; i < n/4; i++ {
 					lBuilder.WriteString("%%")
 				}
 				lBuilder.WriteString("%s")
-				for i := 0; i < n/2; i++ {
+				for i := 0; i < n/4; i++ {
 					lBuilder.WriteString("%%")
 				}
 				l := starlark.String(lBuilder.String())
@@ -1716,7 +1715,7 @@ func TestSafeBinaryAllocs(t *testing.T) {
 				return l, syntax.PERCENT, r
 			},
 		}, {
-			name: "string % mapping",
+			name: "string % dict",
 			inputs: func(n int) (starlark.Value, syntax.Token, starlark.Value) {
 				sqrtN := int(math.Sqrt(float64(n)))
 				l := starlark.String(strings.Repeat("%(foo)s", sqrtN))
@@ -1738,6 +1737,11 @@ func TestSafeBinaryAllocs(t *testing.T) {
 		for _, test := range tests {
 			test.Run(t)
 		}
+
+		t.Run("string % mapping", func(t *testing.T) {
+			// TODO(kcza): check safety flags
+			// TODO(kcza): allocation counting
+		})
 	})
 
 	testContainmentBinary := func(t *testing.T, op string, token syntax.Token) {
