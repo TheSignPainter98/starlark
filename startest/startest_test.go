@@ -1069,3 +1069,24 @@ func TestRunStringErrorPositions(t *testing.T) {
 		}
 	}
 }
+
+func TestSetMaxExecutionSteps(t *testing.T) {
+	t.Run("syntax-error", func(t *testing.T) {
+		dummy := &dummyBase{}
+		st := startest.From(dummy)
+		ok := st.SetExecutionStepModel("def incomplete():")
+		if ok {
+			t.Error("SetReferenceImplementation returned true")
+		}
+	})
+
+	// TODO: enumerate
+
+	// Let's test:
+	// - string_find
+	// - enumerate?
+
+	// too many steps
+	// too few steps
+	// repeat calls
+}

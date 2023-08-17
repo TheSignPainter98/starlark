@@ -65,6 +65,7 @@ type ST struct {
 	safetyGiven       bool
 	predecls          starlark.StringDict
 	locals            map[string]interface{}
+	executionStepModel string
 	TestBase
 }
 
@@ -141,6 +142,16 @@ func (st *ST) AddLocal(name string, value interface{}) {
 	st.locals[name] = value
 }
 
+// TODO: rename this!
+// name ideas:
+// - SetReferenceImplementation
+// - SetExecutionModel
+// - SetStepModel
+// - SetExecutionStepModel
+func (st *ST) SetExecutionStepModel(code string) (ok bool) {
+	st.executionStepModel = code
+}
+
 // RunString tests a string of Starlark code. On unexpected error, reports it,
 // marks the test as failed and returns !ok. Otherwise returns ok.
 func (st *ST) RunString(code string) (ok bool) {
@@ -212,34 +223,39 @@ func (st *ST) RunThread(fn func(*starlark.Thread)) {
 		thread.SetLocal(k, v)
 	}
 
-	allocSum, nSum := st.measureMemory(func() {
+	resources := st.measureResources(func() {
 		fn(thread)
 	})
-
 	if st.Failed() {
 		return
 	}
 
-	meanMeasuredAllocs := allocSum / nSum
-	meanDeclaredAllocs := thread.Allocs() / nSum
-	meanExecutionSteps := thread.ExecutionSteps() / nSum
-
+	meanMeasuredAllocs := resources.memorySum / resources.nSum
 	if st.maxAllocs != math.MaxUint64 && meanMeasuredAllocs > st.maxAllocs {
 		st.Errorf("measured memory is above maximum (%d > %d)", meanMeasuredAllocs, st.maxAllocs)
 	}
-
 	if st.requiredSafety.Contains(starlark.MemSafe) {
+		meanDeclaredAllocs := thread.Allocs() / resources.nSum
 		if meanDeclaredAllocs > st.maxAllocs {
 			st.Errorf("declared allocations are above maximum (%d > %d)", meanDeclaredAllocs, st.maxAllocs)
 		}
-
 		if meanMeasuredAllocs > meanDeclaredAllocs {
 			st.Errorf("measured memory is above declared allocations (%d > %d)", meanMeasuredAllocs, meanDeclaredAllocs)
 		}
 	}
 
+	meanExecutionSteps := thread.ExecutionSteps() / resources.nSum
 	if st.maxExecutionSteps != math.MaxUint64 && meanExecutionSteps > st.maxExecutionSteps {
 		st.Errorf("execution steps are above maximum (%d > %d)", meanExecutionSteps, st.maxExecutionSteps)
+	}
+	if st.requiredSafety.Contains(starlark.CPUSafe) {
+		meanModelExecutionSteps := resources.modelStepSum / resources.nSum
+		if meanModelExecutionSteps > st.maxExecutionSteps {
+			st.Errorf("model execution steps are above maximum (%d > %d)", meanModelExecutionSteps, st.maxExecutionSteps) // TODO: improve this lol
+		}
+		if meanModelExecutionSteps > meanExecutionSteps {// need: declared >= model
+			st.Errorf("model execution steps are above execution steps (%d > %d)", meanModelExecutionSteps, meanExecutionSteps) // TODO: improve this lol
+		}
 	}
 }
 
@@ -248,22 +264,27 @@ func (st *ST) KeepAlive(values ...interface{}) {
 	st.alive = append(st.alive, values...)
 }
 
-func (st *ST) measureMemory(fn func()) (allocSum, nSum uint64) {
+type resources struct {
+	memorySum uint64
+	modelStepSum uint64
+	nSum uint64
+}
+
+func (st *ST) measureResources(thread *Thread, fn func(*Thread)) resources {
 	startNano := time.Now().Nanosecond()
 
 	const nMax = 100_000
 	const memoryMax = 100 * 2 << 20
 	const timeMax = 1e9
 
-	var memoryUsed uint64
 	var valueTrackerOverhead uint64
+	var memorySum, modelStepSum, nSum uint64
 	st.N = 0
-	nSum = 0
 
-	for n := uint64(0); !st.Failed() && memoryUsed-valueTrackerOverhead < memoryMax && n < nMax && (time.Now().Nanosecond()-startNano) < timeMax; {
+	for n := uint64(0); !st.Failed() && memorySum-valueTrackerOverhead < memoryMax && n < nMax && (time.Now().Nanosecond()-startNano) < timeMax; {
 		last := n
 		prevIters := uint64(st.N)
-		prevMemory := memoryUsed
+		prevMemory := memorySum
 		if prevMemory <= 0 {
 			prevMemory = 1
 		}
@@ -284,6 +305,47 @@ func (st *ST) measureMemory(fn func()) (allocSum, nSum uint64) {
 		st.N = int(n)
 		nSum += n
 
+		/*
+		haystack := starlark.String("bbbbbbbbbbbbbbb") // len(haystack) == 15
+		needle := starlark.String("s")
+		st.SetMaxExecutionSteps(200)
+		st.SetStepModel(`
+			for _ in st.ntimes():
+				"a" == "b"
+		`)
+		st.RunTherad(func(...) {
+			string_find := starlark.String(strings.Repeat("b", st.N))
+			starlark.Call(thread, string_find, Tuple{"a"}, nil)
+		})
+
+		string_find, _ := haystack.Attr("aaaa")
+		st.SetMaxExecutionSteps(200)
+		st.SetStepModel(`
+			for _ in st.ntimes():
+				for _ in range(15):
+					"a" == "b"
+		`)
+		st.RunThread(func(thread  *starlark.Thread) {
+			for i := 0; i < st.N; i++ {
+				starlark.Call(thread, string_find, Tuple{needle}, nil)
+			}
+		})
+		*/
+
+		if st.requiredSafety.Contains(starlark.CPUSafe) && st.executionStepModel != "" {
+			_, mod, err := starlark.SourceProgram("startest.executionStepModel", st.executionStepModel, nil)
+			if err != nil {
+				st.Error(err)
+				return resources{}
+			}
+			executionModelThread := &starlark.Thread{}
+			if _, err = mod.Init(executionModelThread, nil); err != nil {
+				st.Error(err)
+				return resources{}
+			}
+			modelStepSum += executionModelThread.ExecutionSteps()
+		}
+
 		var before, after runtime.MemStats
 		runtime.GC()
 		runtime.GC()
@@ -299,21 +361,25 @@ func (st *ST) measureMemory(fn func()) (allocSum, nSum uint64) {
 		valueTrackerOverhead += uint64(cap(st.alive)) * uint64(unsafe.Sizeof(interface{}(nil)))
 		st.alive = nil
 		if iterationMeasure > 0 {
-			memoryUsed += uint64(iterationMeasure)
+			memorySum += uint64(iterationMeasure)
 		}
 	}
 
 	if st.Failed() {
-		return 0, 1
+		return resources{}
 	}
 
-	if valueTrackerOverhead > memoryUsed {
-		memoryUsed = 0
+	if valueTrackerOverhead > memorySum {
+		memorySum = 0
 	} else {
-		memoryUsed -= valueTrackerOverhead
+		memorySum -= valueTrackerOverhead
 	}
 
-	return memoryUsed, nSum
+	return resources {
+		memorySum: memorySum,
+		referenceStepSum: referenceStepSum,
+		nSum: nSum,
+	}
 }
 
 func (st *ST) String() string        { return "<startest.ST>" }
