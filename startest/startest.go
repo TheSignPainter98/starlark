@@ -43,6 +43,7 @@ import (
 	"github.com/canonical/starlark/resolve"
 	"github.com/canonical/starlark/starlark"
 	"github.com/canonical/starlark/starlarktest"
+	"github.com/canonical/starlark/syntax"
 	"gopkg.in/check.v1"
 )
 
@@ -142,6 +143,22 @@ func (st *ST) AddLocal(name string, value interface{}) {
 	st.locals[name] = value
 }
 
+// TODO: rename
+func sourceCode(filename string, code string, isPredeclared func(string) bool) (*syntax.File, *starlark.Program, error) {
+	code, err := Reindent(code)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	allowGlobalReassign := resolve.AllowGlobalReassign
+	defer func() {
+		resolve.AllowGlobalReassign = allowGlobalReassign
+	}()
+	resolve.AllowGlobalReassign = true
+
+	return starlark.SourceProgram("startest.RunString", code, isPredeclared)
+}
+
 // TODO: rename this!
 // name ideas:
 // - SetReferenceImplementation
@@ -156,20 +173,8 @@ func (st *ST) SetExecutionStepModel(code string) {
 // marks the test as failed and returns !ok. Otherwise returns ok.
 func (st *ST) RunString(code string) (ok bool) {
 	if code = strings.TrimRight(code, " \t\r\n"); code == "" {
-		return true
-	}
-	code, err := Reindent(code)
-	if err != nil {
-		st.Error(err)
 		return false
 	}
-
-	allowGlobalReassign := resolve.AllowGlobalReassign
-	defer func() {
-		resolve.AllowGlobalReassign = allowGlobalReassign
-	}()
-	resolve.AllowGlobalReassign = true
-
 	assertMembers, err := starlarktest.LoadAssertModule()
 	if err != nil {
 		st.Errorf("internal error: %v", err)
@@ -185,7 +190,7 @@ func (st *ST) RunString(code string) (ok bool) {
 	st.AddLocal("Reporter", st) // Set starlarktest reporter outside of RunThread
 	st.AddValue("assert", assert)
 
-	_, mod, err := starlark.SourceProgram("startest.RunString", code, func(name string) bool {
+	_, mod, err := sourceCode("startest.RunString", code, func(name string) bool {
 		_, ok := st.predecls[name]
 		return ok
 	})
@@ -333,15 +338,10 @@ func (st *ST) measureResources(fn func()) resources {
 		*/
 
 		if st.requiredSafety.Contains(starlark.CPUSafe) && st.executionStepModel != "" {
-			model, err := Reindent(st.executionStepModel)
-			if err != nil {
-				st.Error(err)
-				panic("return")
-			}
 			modelPredecls := starlark.StringDict{
 				"st": st,
 			}
-			_, mod, err := starlark.SourceProgram("startest.executionStepModel", model, func(name string) bool {
+			_, mod, err := sourceCode("startest.executionStepModel", st.executionStepModel, func(name string) bool {
 				_, ok := modelPredecls[name]
 				return ok
 			})
@@ -350,11 +350,6 @@ func (st *ST) measureResources(fn func()) resources {
 				return resources{}
 			}
 			executionModelThread := &starlark.Thread{}
-			allowGlobalReassign := resolve.AllowGlobalReassign
-			defer func() {
-				resolve.AllowGlobalReassign = allowGlobalReassign
-			}()
-			resolve.AllowGlobalReassign = true
 			if _, err = mod.Init(executionModelThread, modelPredecls); err != nil { // TODO: allow global reassign (e.g. for `for` loops)
 				st.Error(err)
 				return resources{}

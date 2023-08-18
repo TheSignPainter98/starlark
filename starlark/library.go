@@ -83,7 +83,7 @@ func init() {
 		"chr":       MemSafe,
 		"dict":      MemSafe,
 		"dir":       MemSafe,
-		"enumerate": MemSafe,
+		"enumerate": MemSafe | CPUSafe,
 		"fail":      MemSafe,
 		"float":     MemSafe,
 		"getattr":   NotSafe,
@@ -532,6 +532,7 @@ func enumerate(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, e
 	var x Value
 
 	if n := Len(iterable); n >= 0 {
+		thread.AddExecutionSteps(uint64(n) * 13)
 		// common case: known length
 		overhead := EstimateMakeSize([]Value{Tuple{}}, n) +
 			EstimateMakeSize([][2]Value{{MakeInt(0), nil}}, n)
@@ -553,6 +554,16 @@ func enumerate(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, e
 		pairCost := EstimateSize(Tuple{MakeInt(0), nil})
 		pairsAppender := NewSafeAppender(thread, &pairs)
 		for i := 0; iter.Next(&x); i++ {
+			if err := thread.AddExecutionSteps(
+				1 + // next iterate
+					1 + // make int
+					1 + // make tuple
+					2 + // set tuple element
+					1 + // append
+					7, // what's this overhead?
+			); err != nil {
+				return nil, err
+			}
 			if err := thread.AddAllocs(pairCost); err != nil {
 				return nil, err
 			}

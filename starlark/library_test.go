@@ -738,6 +738,7 @@ func TestEnumerateAllocs(t *testing.T) {
 
 	t.Run("foo", func(t *testing.T) {
 		st := startest.From(t)
+		st.RequireSafety(starlark.CPUSafe)
 		st.SetExecutionStepModel(`
 			for i in range(st.n): # TODO: discrepency here between st.ntimes() and range(st.n) usage (may feel odd)
 				st.do((i, None))
