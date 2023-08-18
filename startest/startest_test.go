@@ -1074,10 +1074,12 @@ func TestSetMaxExecutionSteps(t *testing.T) {
 	t.Run("syntax-error", func(t *testing.T) {
 		dummy := &dummyBase{}
 		st := startest.From(dummy)
-		ok := st.SetExecutionStepModel("def incomplete():")
-		if ok {
-			t.Error("SetReferenceImplementation returned true")
-		}
+		st.SetExecutionStepModel("def incomplete():")
+		// st.SetExecutionStepModel(`
+		// 	# string_find:
+		// 	for _ in st.ntimes():
+		// 		st.do('a' == 'b') # TODO: perhaps revert the steps taken to compute st.do
+		// `)
 	})
 
 	// TODO: enumerate

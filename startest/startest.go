@@ -57,14 +57,14 @@ type TestBase interface {
 }
 
 type ST struct {
-	maxAllocs         uint64
-	maxExecutionSteps uint64
-	alive             []interface{}
-	N                 int
-	requiredSafety    starlark.Safety
-	safetyGiven       bool
-	predecls          starlark.StringDict
-	locals            map[string]interface{}
+	maxAllocs          uint64
+	maxExecutionSteps  uint64
+	alive              []interface{}
+	N                  int
+	requiredSafety     starlark.Safety
+	safetyGiven        bool
+	predecls           starlark.StringDict
+	locals             map[string]interface{}
 	executionStepModel string
 	TestBase
 }
@@ -148,8 +148,8 @@ func (st *ST) AddLocal(name string, value interface{}) {
 // - SetExecutionModel
 // - SetStepModel
 // - SetExecutionStepModel
-func (st *ST) SetExecutionStepModel(code string) (ok bool) {
-	st.executionStepModel = code
+func (st *ST) SetExecutionStepModel(code string) {
+	st.executionStepModel = strings.TrimRight(code, " \t\r\n") // TODO: consider checking syntax here.
 }
 
 // RunString tests a string of Starlark code. On unexpected error, reports it,
@@ -253,7 +253,7 @@ func (st *ST) RunThread(fn func(*starlark.Thread)) {
 		if meanModelExecutionSteps > st.maxExecutionSteps {
 			st.Errorf("model execution steps are above maximum (%d > %d)", meanModelExecutionSteps, st.maxExecutionSteps) // TODO: improve this lol
 		}
-		if meanModelExecutionSteps > meanExecutionSteps {// need: declared >= model
+		if meanModelExecutionSteps > meanExecutionSteps { // need: declared >= model
 			st.Errorf("model execution steps are above execution steps (%d > %d)", meanModelExecutionSteps, meanExecutionSteps) // TODO: improve this lol
 		}
 	}
@@ -265,12 +265,12 @@ func (st *ST) KeepAlive(values ...interface{}) {
 }
 
 type resources struct {
-	memorySum uint64
+	memorySum    uint64
 	modelStepSum uint64
-	nSum uint64
+	nSum         uint64
 }
 
-func (st *ST) measureResources(thread *Thread, fn func(*Thread)) resources {
+func (st *ST) measureResources(fn func()) resources {
 	startNano := time.Now().Nanosecond()
 
 	const nMax = 100_000
@@ -306,40 +306,56 @@ func (st *ST) measureResources(thread *Thread, fn func(*Thread)) resources {
 		nSum += n
 
 		/*
-		haystack := starlark.String("bbbbbbbbbbbbbbb") // len(haystack) == 15
-		needle := starlark.String("s")
-		st.SetMaxExecutionSteps(200)
-		st.SetStepModel(`
-			for _ in st.ntimes():
-				"a" == "b"
-		`)
-		st.RunTherad(func(...) {
-			string_find := starlark.String(strings.Repeat("b", st.N))
-			starlark.Call(thread, string_find, Tuple{"a"}, nil)
-		})
-
-		string_find, _ := haystack.Attr("aaaa")
-		st.SetMaxExecutionSteps(200)
-		st.SetStepModel(`
-			for _ in st.ntimes():
-				for _ in range(15):
+			haystack := starlark.String("bbbbbbbbbbbbbbb") // len(haystack) == 15
+			needle := starlark.String("s")
+			st.SetMaxExecutionSteps(200)
+			st.SetStepModel(`
+				for _ in st.ntimes():
 					"a" == "b"
-		`)
-		st.RunThread(func(thread  *starlark.Thread) {
-			for i := 0; i < st.N; i++ {
-				starlark.Call(thread, string_find, Tuple{needle}, nil)
-			}
-		})
+			`)
+			st.RunTherad(func(...) {
+				string_find := starlark.String(strings.Repeat("b", st.N))
+				starlark.Call(thread, string_find, Tuple{"a"}, nil)
+			})
+
+			string_find, _ := haystack.Attr("aaaa")
+			st.SetMaxExecutionSteps(200)
+			st.SetStepModel(`
+				for _ in st.ntimes():
+					for _ in range(15):
+						"a" == "b"
+			`)
+			st.RunThread(func(thread  *starlark.Thread) {
+				for i := 0; i < st.N; i++ {
+					starlark.Call(thread, string_find, Tuple{needle}, nil)
+				}
+			})
 		*/
 
 		if st.requiredSafety.Contains(starlark.CPUSafe) && st.executionStepModel != "" {
-			_, mod, err := starlark.SourceProgram("startest.executionStepModel", st.executionStepModel, nil)
+			model, err := Reindent(st.executionStepModel)
+			if err != nil {
+				st.Error(err)
+				panic("return")
+			}
+			modelPredecls := starlark.StringDict{
+				"st": st,
+			}
+			_, mod, err := starlark.SourceProgram("startest.executionStepModel", model, func(name string) bool {
+				_, ok := modelPredecls[name]
+				return ok
+			})
 			if err != nil {
 				st.Error(err)
 				return resources{}
 			}
 			executionModelThread := &starlark.Thread{}
-			if _, err = mod.Init(executionModelThread, nil); err != nil {
+			allowGlobalReassign := resolve.AllowGlobalReassign
+			defer func() {
+				resolve.AllowGlobalReassign = allowGlobalReassign
+			}()
+			resolve.AllowGlobalReassign = true
+			if _, err = mod.Init(executionModelThread, modelPredecls); err != nil { // TODO: allow global reassign (e.g. for `for` loops)
 				st.Error(err)
 				return resources{}
 			}
@@ -375,10 +391,10 @@ func (st *ST) measureResources(thread *Thread, fn func(*Thread)) resources {
 		memorySum -= valueTrackerOverhead
 	}
 
-	return resources {
-		memorySum: memorySum,
-		referenceStepSum: referenceStepSum,
-		nSum: nSum,
+	return resources{
+		memorySum:    memorySum,
+		modelStepSum: modelStepSum,
+		nSum:         nSum,
 	}
 }
 
@@ -392,6 +408,7 @@ var errorMethod = starlark.NewBuiltinWithSafety("error", stSafe, st_error)
 var fatalMethod = starlark.NewBuiltinWithSafety("fatal", stSafe, st_fatal)
 var keepAliveMethod = starlark.NewBuiltinWithSafety("keep_alive", stSafe, st_keep_alive)
 var ntimesMethod = starlark.NewBuiltinWithSafety("ntimes", stSafe, st_ntimes)
+var doMethod = starlark.NewBuiltinWithSafety("do", stSafe, st_do)
 
 func (st *ST) Attr(name string) (starlark.Value, error) {
 	switch name {
@@ -403,6 +420,8 @@ func (st *ST) Attr(name string) (starlark.Value, error) {
 		return keepAliveMethod.BindReceiver(st), nil
 	case "ntimes":
 		return ntimesMethod.BindReceiver(st), nil
+	case "do":
+		return doMethod.BindReceiver(st), nil
 	case "n":
 		return starlark.MakeInt(st.N), nil
 	}
@@ -516,4 +535,15 @@ func (it *ntimes_iterator) Next(p *starlark.Value) bool {
 		return true
 	}
 	return false
+}
+
+func st_do(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("%s: expected one positional argument", b.Name())
+	}
+	if len(kwargs) > 0 {
+		return nil, fmt.Errorf("%s: unexpected keyword arguments", b.Name())
+	}
+
+	return starlark.None, nil
 }

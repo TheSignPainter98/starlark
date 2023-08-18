@@ -736,6 +736,24 @@ func TestEnumerateAllocs(t *testing.T) {
 		t.Fatal("no such builtin: enumerate")
 	}
 
+	t.Run("foo", func(t *testing.T) {
+		st := startest.From(t)
+		st.SetExecutionStepModel(`
+			for i in range(st.n): # TODO: discrepency here between st.ntimes() and range(st.n) usage (may feel odd)
+				st.do((i, None))
+		`)
+		st.RunThread(func(thread *starlark.Thread) {
+			iter := &testIterable{
+				maxN: st.N,
+				nth:  func(thread *starlark.Thread, _ int) (starlark.Value, error) { return starlark.None, nil },
+			}
+			_, err := starlark.Call(thread, starlark.Universe["enumerate"], starlark.Tuple{iter}, nil)
+			if err != nil {
+				st.Error(err)
+			}
+		})
+	})
+
 	t.Run("safety-respected", func(t *testing.T) {
 		const expected = "feature unavailable to the sandbox"
 
