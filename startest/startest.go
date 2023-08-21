@@ -251,15 +251,15 @@ func (st *ST) RunThread(fn func(*starlark.Thread)) {
 
 	meanExecutionSteps := thread.ExecutionSteps() / resources.nSum
 	if st.maxExecutionSteps != math.MaxUint64 && meanExecutionSteps > st.maxExecutionSteps {
-		st.Errorf("execution steps are above maximum (%d > %d)", meanExecutionSteps, st.maxExecutionSteps)
+		st.Errorf("declared execution steps are above maximum (%d > %d)", meanExecutionSteps, st.maxExecutionSteps)
 	}
 	if st.requiredSafety.Contains(starlark.CPUSafe) {
 		meanModelExecutionSteps := resources.modelStepSum / resources.nSum
 		if meanModelExecutionSteps > st.maxExecutionSteps {
 			st.Errorf("model execution steps are above maximum (%d > %d)", meanModelExecutionSteps, st.maxExecutionSteps) // TODO: improve this lol
 		}
-		if meanModelExecutionSteps > meanExecutionSteps { // need: declared >= model
-			st.Errorf("model execution steps are above execution steps (%d > %d)", meanModelExecutionSteps, meanExecutionSteps) // TODO: improve this lol
+		if meanModelExecutionSteps > meanExecutionSteps {
+			st.Errorf("model execution steps are above declared execution steps (%d > %d)", meanModelExecutionSteps, meanExecutionSteps) // TODO: improve this lol
 		}
 	}
 }
