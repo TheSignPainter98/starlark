@@ -210,7 +210,7 @@ var (
 		"count":          MemSafe,
 		"elem_ords":      MemSafe,
 		"elems":          MemSafe,
-		"endswith":       MemSafe,
+		"endswith":       MemSafe | CPUSafe,
 		"find":           MemSafe,
 		"format":         MemSafe,
 		"index":          MemSafe,
@@ -555,12 +555,7 @@ func enumerate(thread *Thread, _ *Builtin, args Tuple, kwargs []Tuple) (Value, e
 		pairsAppender := NewSafeAppender(thread, &pairs)
 		for i := 0; iter.Next(&x); i++ {
 			if err := thread.AddExecutionSteps(
-				1 + // next iterate
-					1 + // make int
-					1 + // make tuple
-					2 + // set tuple element
-					1 + // append
-					7, // what's this overhead?
+				LoopIterStepOverhead + 2,
 			); err != nil {
 				return nil, err
 			}
@@ -2522,7 +2517,7 @@ func string_rindex(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Valu
 
 // https://github.com/google/starlark-go/starlark/blob/master/doc/spec.md#string·startswith
 // https://github.com/google/starlark-go/starlark/blob/master/doc/spec.md#string·endswith
-func string_startswith(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
+func string_startswith(thread *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value, error) {
 	var x Value
 	var start, end Value = None, None
 	if err := UnpackPositionalArgs(b.Name(), args, kwargs, 1, &x, &start, &end); err != nil {
@@ -2553,12 +2548,20 @@ func string_startswith(_ *Thread, b *Builtin, args Tuple, kwargs []Tuple) (Value
 				return nil, fmt.Errorf("%s: want string, got %s, for element %d",
 					b.Name(), x.Type(), i)
 			}
+			stepDelta := MustEstimateIterSteps(`st.do('a' == 'b')`, min(len(s), len(prefix)))
+			if err := thread.AddExecutionSteps(stepDelta); err != nil {
+				return nil, err
+			}
 			if f(s, prefix) {
 				return True, nil
 			}
 		}
 		return False, nil
 	case String:
+		stepDelta := MustEstimateIterSteps(`st.do('a' == 'b')`, min(len(s), len(x)))
+		if err := thread.AddExecutionSteps(stepDelta); err != nil {
+			return nil, err
+		}
 		return Bool(f(s, string(x))), nil
 	}
 	return nil, fmt.Errorf("%s: got %s, want string or tuple of string", b.Name(), x.Type())
@@ -2944,4 +2947,14 @@ func updateDict(thread *Thread, dict *Dict, updates Tuple, kwargs []Tuple) error
 // where name is b.Name() and msg is a string or error.
 func nameErr(b *Builtin, msg interface{}) error {
 	return fmt.Errorf("%s: %v", b.Name(), msg)
+}
+
+func min(nums ...int) int {
+	min := math.MaxInt
+	for _, num := range nums {
+		if num < min {
+			min = num
+		}
+	}
+	return min
 }

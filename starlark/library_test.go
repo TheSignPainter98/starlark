@@ -736,25 +736,6 @@ func TestEnumerateAllocs(t *testing.T) {
 		t.Fatal("no such builtin: enumerate")
 	}
 
-	t.Run("foo", func(t *testing.T) {
-		st := startest.From(t)
-		st.RequireSafety(starlark.CPUSafe)
-		st.SetExecutionStepModel(`
-			for i in range(st.n): # TODO: discrepency here between st.ntimes() and range(st.n) usage (may feel odd)
-				st.do((i, None))
-		`)
-		st.RunThread(func(thread *starlark.Thread) {
-			iter := &testIterable{
-				maxN: st.N,
-				nth:  func(thread *starlark.Thread, _ int) (starlark.Value, error) { return starlark.None, nil },
-			}
-			_, err := starlark.Call(thread, starlark.Universe["enumerate"], starlark.Tuple{iter}, nil)
-			if err != nil {
-				st.Error(err)
-			}
-		})
-	})
-
 	t.Run("safety-respected", func(t *testing.T) {
 		const expected = "feature unavailable to the sandbox"
 
@@ -911,6 +892,26 @@ func TestEnumerateAllocs(t *testing.T) {
 				st.KeepAlive(result)
 			})
 		})
+	})
+}
+
+func TestEnumerateExecutionSteps(t *testing.T) {
+	st := startest.From(t)
+	st.RequireSafety(starlark.CPUSafe)
+	st.SetMaxExecutionSteps(0)
+	st.SetExecutionStepModel(`
+		for _ in st.ntimes():
+			st.do((0, None))
+	`)
+	st.RunThread(func(thread *starlark.Thread) {
+		iter := &testIterable{
+			maxN: st.N,
+			nth:  func(thread *starlark.Thread, _ int) (starlark.Value, error) { return starlark.None, nil },
+		}
+		_, err := starlark.Call(thread, starlark.Universe["enumerate"], starlark.Tuple{iter}, nil)
+		if err != nil {
+			st.Error(err)
+		}
 	})
 }
 
@@ -2840,8 +2841,43 @@ func testStringFindMethodAllocs(t *testing.T, name string) {
 	})
 }
 
+func TestStringEndswithExecutionSteps(t *testing.T) {
+	testStringFindMethodExecutionSteps(t, "endswith")
+}
+
+func testStringFindMethodExecutionSteps(t *testing.T, name string) {
+	haystack := starlark.String("Better safe than sorry")
+	needle := starlark.String("safe")
+
+	string_find, _ := haystack.Attr(name)
+	if string_find == nil {
+		t.Fatalf("no such method: string.%s", name)
+	}
+
+	st := startest.From(t)
+	st.RequireSafety(starlark.CPUSafe)
+	st.SetMaxExecutionSteps(0)
+	st.SetExecutionStepModel(`
+		for i in st.ntimes():
+			st.do('hhhh' == 'safe')
+	`)
+	st.RunThread(func(thread *starlark.Thread) {
+		for i := 0; i < st.N; i++ {
+			_, err := starlark.Call(thread, string_find, starlark.Tuple{needle}, nil)
+			if err != nil {
+				st.Error(err)
+			}
+		}
+	})
+	st.Error("fdsa")
+}
+
 func TestStringFindAllocs(t *testing.T) {
 	testStringFindMethodAllocs(t, "find")
+}
+
+func TestStringFindExecutionSteps(t *testing.T) {
+	testStringFindMethodExecutionSteps(t, "find")
 }
 
 func TestStringFormatAllocs(t *testing.T) {

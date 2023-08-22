@@ -67,6 +67,7 @@ type ST struct {
 	predecls           starlark.StringDict
 	locals             map[string]interface{}
 	executionStepModel string
+	stepOverhead       uint64
 	TestBase
 }
 
@@ -143,8 +144,7 @@ func (st *ST) AddLocal(name string, value interface{}) {
 	st.locals[name] = value
 }
 
-// TODO: rename
-func sourceCode(filename string, code string, isPredeclared func(string) bool) (*syntax.File, *starlark.Program, error) {
+func parseCode(filename string, code string, isPredeclared func(string) bool) (*syntax.File, *starlark.Program, error) {
 	code, err := Reindent(code)
 	if err != nil {
 		return nil, nil, err
@@ -156,7 +156,7 @@ func sourceCode(filename string, code string, isPredeclared func(string) bool) (
 	}()
 	resolve.AllowGlobalReassign = true
 
-	return starlark.SourceProgram("startest.RunString", code, isPredeclared)
+	return starlark.SourceProgram(filename, code, isPredeclared)
 }
 
 // TODO: rename this!
@@ -190,7 +190,7 @@ func (st *ST) RunString(code string) (ok bool) {
 	st.AddLocal("Reporter", st) // Set starlarktest reporter outside of RunThread
 	st.AddValue("assert", assert)
 
-	_, mod, err := sourceCode("startest.RunString", code, func(name string) bool {
+	_, mod, err := parseCode("startest.RunString", code, func(name string) bool {
 		_, ok := st.predecls[name]
 		return ok
 	})
@@ -341,7 +341,7 @@ func (st *ST) measureResources(fn func()) resources {
 			modelPredecls := starlark.StringDict{
 				"st": st,
 			}
-			_, mod, err := sourceCode("startest.executionStepModel", st.executionStepModel, func(name string) bool {
+			_, mod, err := parseCode("startest.executionStepModel", st.executionStepModel, func(name string) bool {
 				_, ok := modelPredecls[name]
 				return ok
 			})
@@ -349,12 +349,13 @@ func (st *ST) measureResources(fn func()) resources {
 				st.Error(err)
 				return resources{}
 			}
+			st.stepOverhead = 0
 			executionModelThread := &starlark.Thread{}
-			if _, err = mod.Init(executionModelThread, modelPredecls); err != nil { // TODO: allow global reassign (e.g. for `for` loops)
+			if _, err = mod.Init(executionModelThread, modelPredecls); err != nil {
 				st.Error(err)
 				return resources{}
 			}
-			modelStepSum += executionModelThread.ExecutionSteps()
+			modelStepSum += executionModelThread.ExecutionSteps() - st.stepOverhead
 		}
 
 		var before, after runtime.MemStats
@@ -404,6 +405,10 @@ var fatalMethod = starlark.NewBuiltinWithSafety("fatal", stSafe, st_fatal)
 var keepAliveMethod = starlark.NewBuiltinWithSafety("keep_alive", stSafe, st_keep_alive)
 var ntimesMethod = starlark.NewBuiltinWithSafety("ntimes", stSafe, st_ntimes)
 var doMethod = starlark.NewBuiltinWithSafety("do", stSafe, st_do)
+
+var keepAliveStepOverhead = starlark.MustEstimateSteps("st.keep_alive()")
+var ntimesStepOverhead = starlark.MustEstimateSteps("st.ntimes()")
+var doStepOverhead = starlark.MustEstimateSteps("st.do()")
 
 func (st *ST) Attr(name string) (starlark.Value, error) {
 	switch name {
@@ -481,6 +486,7 @@ func st_keep_alive(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple,
 		recv.KeepAlive(arg)
 	}
 
+	recv.stepOverhead += keepAliveStepOverhead
 	return starlark.None, nil
 }
 
@@ -493,6 +499,7 @@ func st_ntimes(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwa
 	}
 
 	recv := b.Receiver().(*ST)
+	recv.stepOverhead += ntimesStepOverhead
 	return &ntimes_iterable{recv.N}, nil
 }
 
@@ -532,13 +539,14 @@ func (it *ntimes_iterator) Next(p *starlark.Value) bool {
 	return false
 }
 
-func st_do(_ *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+func st_do(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("%s: expected one positional argument", b.Name())
 	}
 	if len(kwargs) > 0 {
 		return nil, fmt.Errorf("%s: unexpected keyword arguments", b.Name())
 	}
-
+	recv := b.Receiver().(*ST)
+	recv.stepOverhead += doStepOverhead
 	return starlark.None, nil
 }
