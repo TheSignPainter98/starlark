@@ -12,6 +12,70 @@ import (
 	"github.com/canonical/starlark/startest"
 )
 
+// The following is an example of memory-safety testing using the RunString
+// method.
+func ExampleST_RunString() {
+	// func TestFoo(t *testing.T) {
+	TestFoo := func(t *testing.T) {
+		st := startest.From(t)
+		st.RequireSafety(starlark.MemSafe)
+
+		// Allow at most 100 bytes allocated per st.n
+		st.SetMaxAllocs(100)
+
+		// mybuiltin does something which makes some allocations
+		st.AddBuiltin(starlark.NewBuiltinWithSafety("make_allocations", starlark.MemSafe, func(thread *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+			newList := starlark.NewList([]starlark.Value{starlark.MakeInt(1), starlark.MakeInt(2)})
+
+			return newList, thread.AddAllocs(int64(starlark.EstimateSizeDeep(newList)))
+		}))
+
+		st.RunString(`
+		for _ in range(st.n):
+			st.keep_alive(make_allocations())
+	`)
+	}
+	// }
+
+	// Ignore this.
+	t := &testing.T{}
+	TestFoo(t)
+	if !t.Failed() {
+		fmt.Println("ok")
+	}
+	// Output: ok
+}
+
+// The following is an example of memory-safety testing using the RunThread
+// method.
+func ExampleST_RunThread() {
+	// func TestFoo(t *testing.T) {
+	TestFoo := func(t *testing.T) {
+		st := startest.From(t)
+		st.RequireSafety(starlark.MemSafe)
+
+		// Allow at most 4 bytes allocated per st.N.
+		st.SetMaxAllocs(16)
+
+		st.RunThread(func(thread *starlark.Thread) {
+			for i := 0; i < st.N; i++ {
+				v := new(int32)
+				thread.AddAllocs(int64(starlark.EstimateSize(v)))
+				st.KeepAlive(v)
+			}
+		})
+	}
+	// }
+
+	// Ignore this.
+	t := &testing.T{}
+	TestFoo(t)
+	if !t.Failed() {
+		fmt.Println("ok")
+	}
+	// Output: ok
+}
+
 type dummyBase struct {
 	failed bool
 	errors *strings.Builder
